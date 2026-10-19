@@ -81,12 +81,17 @@ impl Location {
 
 /// Selects the master file by name, then each file in `location`, and reads the last one whole.
 pub(crate) fn read(card: &mut dyn Transport, location: &Location) -> Result<Vec<u8>, Error> {
-    select(card, 0x04, MASTER_FILE_NAME)?;
+    select_master_file(card)?;
     let mut length = 0;
     for id in &location.0 {
         length = select(card, 0x00, id)?;
     }
     read_binary_complete(card, length)
+}
+
+/// Selects the master file by name.
+pub(crate) fn select_master_file(card: &mut dyn Transport) -> Result<(), Error> {
+    select(card, 0x04, MASTER_FILE_NAME).map(drop)
 }
 
 /// Selects a file and returns the length its FCI announces.

@@ -7,18 +7,17 @@ extern crate self as rdnie;
 mod apdu;
 mod atr;
 mod certificates;
+mod cwa14890;
 #[cfg(test)]
 #[path = "../tests/emulator/mod.rs"]
 mod emulator;
 mod error;
 mod files;
+mod key_sets;
 #[cfg(feature = "pcsc")]
 mod pcsc_transport;
+mod pin;
 mod pkcs15;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the CWA-14890 channel is its caller")
-)]
 mod secure_messaging;
 mod session;
 mod transport;

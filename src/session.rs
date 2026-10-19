@@ -50,6 +50,7 @@ use crate::{
     atr::check_dnie_3,
     certificates,
     files::{self, Location},
+    pin,
 };
 
 const IDESP: &[u8] = &[0x3F, 0x00, 0x00, 0x06];
@@ -58,7 +59,6 @@ const IDESP: &[u8] = &[0x3F, 0x00, 0x00, 0x06];
 pub struct Session<T: Transport> {
     transport: T,
     /// Support number, which picks the channel key set; card data, so never logged.
-    #[allow(dead_code, reason = "the PIN channel reads it to pick its key set")]
     idesp: Option<String>,
 }
 
@@ -90,6 +90,20 @@ impl<T: Transport> Session<T> {
         })
     }
 
+    /// Reads how many PIN attempts are left through the PIN channel, without sending a PIN.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Session::open`], [`Error::PinBlocked`], [`Error::SecureChannel`] if the mutual
+    /// authentication fails and [`Error::Status`] if the card gives no retry count.
+    pub fn pin_retries(&mut self) -> Result<u8, Error> {
+        let idesp = self.idesp.as_deref();
+        self.transport.transaction(|card| {
+            check_dnie_3(&card.reset()?)?;
+            pin::retries_left(card, idesp)
+        })
+    }
+
     /// Ends the session and hands back the transport.
     pub fn into_transport(self) -> T {
         self.transport
@@ -104,9 +118,72 @@ fn read_idesp(card: &mut dyn Transport) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::Session;
-    use crate::emulator::{DNIE_3_ATR, EmulatedDnie};
+    use crate::{
+        Error, StatusWord,
+        emulator::{DNIE_3_ATR, EmulatedDnie, TerminalKey},
+        key_sets::{KeySet, R1_PIN, R1_USER, R2_PIN, R2_USER},
+    };
+
+    pub(crate) fn card_accepting(key_sets: &[&KeySet]) -> EmulatedDnie {
+        let terminals: Vec<TerminalKey> = key_sets
+            .iter()
+            .map(|keys| TerminalKey {
+                chr: keys.terminal_chr,
+                modulus: keys.modulus.to_vec(),
+            })
+            .collect();
+        EmulatedDnie::new(&DNIE_3_ATR).with_secure_channel(&terminals)
+    }
+
+    pub(crate) fn card_with_channel() -> EmulatedDnie {
+        card_accepting(&[&R1_PIN, &R1_USER, &R2_PIN, &R2_USER])
+    }
+
+    fn retries(card: EmulatedDnie) -> Result<u8, Error> {
+        Session::open(card).unwrap().pin_retries()
+    }
+
+    #[test]
+    fn reads_the_retries_left() {
+        assert_eq!(retries(card_with_channel().with_pin_retries(2)).unwrap(), 2);
+    }
+
+    #[test]
+    fn reports_a_blocked_pin() {
+        assert!(matches!(
+            retries(card_with_channel().with_pin_retries(0)),
+            Err(Error::PinBlocked)
+        ));
+    }
+
+    #[test]
+    fn refuses_any_other_retries_status() {
+        assert!(matches!(
+            retries(card_with_channel().answering_retries_with(0x6982)),
+            Err(Error::Status(StatusWord(0x6982)))
+        ));
+    }
+
+    #[test]
+    fn takes_first_generation_keys_below_bmp100001() {
+        let card = card_accepting(&[&R1_PIN]).with_idesp(b"BMP100000");
+        assert!(retries(card).is_ok());
+    }
+
+    #[test]
+    fn takes_second_generation_keys_from_bmp100001() {
+        let second = card_accepting(&[&R2_PIN]).with_idesp(b"BMP100001");
+        let first = card_accepting(&[&R1_PIN]).with_idesp(b"BMP100001");
+        assert!(retries(second).is_ok());
+        assert!(retries(first).is_err());
+    }
+
+    #[test]
+    fn takes_second_generation_keys_without_idesp() {
+        assert!(retries(card_accepting(&[&R2_PIN])).is_ok());
+    }
 
     #[test]
     fn keeps_the_idesp() {
