@@ -18,6 +18,10 @@ pcsc = ["dep:pcsc"]
 name = "detect"
 required-features = ["pcsc"]
 
+[[example]]
+name = "probe"
+required-features = ["pcsc"]
+
 [dependencies]
 cbc = { version = "0.2", features = ["alloc"] }
 der = "0.7"
