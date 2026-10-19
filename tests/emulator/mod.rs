@@ -1,6 +1,6 @@
 //! Emulated DNIe behind the `Transport` seam, generated at test time from no real card data.
 // Each test crate uses a different part of the emulator.
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 mod channel;
 mod chip;
@@ -12,7 +12,7 @@ use rdnie::{Error, Transport};
 
 use channel::CardChannel;
 use chip::Chip;
-pub use chip::{Handshake, TerminalKey};
+pub use chip::{Handshake, TerminalKey, ca_public_key};
 pub use pkcs15::HolderCertificate;
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
@@ -99,6 +99,18 @@ impl EmulatedDnie {
         let mut card = self.with_file(&[ICC_CERTIFICATE], chip::component_certificate());
         card.chip = Some(Chip::new(terminals));
         card
+    }
+
+    /// Stores a component certificate that the test CA did not sign.
+    pub fn with_untrusted_component_certificate(self) -> Self {
+        self.with_file(&[ICC_CERTIFICATE], chip::foreign_component_certificate())
+    }
+
+    /// How many INTERNAL AUTHENTICATE commands the card received.
+    pub fn internal_authentications(&self) -> usize {
+        self.chip
+            .as_ref()
+            .map_or(0, |chip| chip.internal_authentications)
     }
 
     /// PIN attempts left; 0 means blocked.

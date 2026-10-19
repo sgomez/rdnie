@@ -44,6 +44,8 @@
 
 //! The PIN channel and the retry counter read through it, as `Dnie3` opens and queries them.
 
+use rsa::RsaPublicKey;
+
 use crate::{
     Command, Error, StatusWord, Transport, cwa14890, files,
     key_sets::{Channel, KeySet},
@@ -57,8 +59,12 @@ const RETRIES_TAG: u8 = 0xC0;
 const BLOCKED: StatusWord = StatusWord(0x6983);
 
 /// Opens the PIN channel and reads how many PIN attempts are left, without sending a PIN.
-pub(crate) fn retries_left(card: &mut dyn Transport, idesp: Option<&str>) -> Result<u8, Error> {
-    let mut channel = open_pin_channel(card, idesp)?;
+pub(crate) fn retries_left(
+    card: &mut dyn Transport,
+    idesp: Option<&str>,
+    ca_key: &RsaPublicKey,
+) -> Result<u8, Error> {
+    let mut channel = open_pin_channel(card, idesp, ca_key)?;
     let response = channel.transmit(
         card,
         &Command {
@@ -81,10 +87,11 @@ pub(crate) fn retries_left(card: &mut dyn Transport, idesp: Option<&str>) -> Res
 fn open_pin_channel(
     card: &mut dyn Transport,
     idesp: Option<&str>,
+    ca_key: &RsaPublicKey,
 ) -> Result<SecureMessaging, Error> {
     match files::select_master_file(card) {
         Ok(()) | Err(Error::Status(_)) => {}
         Err(error) => return Err(error),
     }
-    cwa14890::open(card, KeySet::for_card(idesp, Channel::Pin))
+    cwa14890::open(card, KeySet::for_card(idesp, Channel::Pin), ca_key)
 }
