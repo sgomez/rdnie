@@ -9,6 +9,7 @@ mod pkcs15;
 use std::collections::BTreeMap;
 
 use rdnie::{Error, Transport};
+use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 
 use channel::CardChannel;
 use chip::Chip;
@@ -37,6 +38,8 @@ const MASTER_FILE_NAME: &[u8] = b"Master.File";
 const IDESP: [u8; 2] = [0x00, 0x06];
 const ICC_CERTIFICATE: [u8; 2] = [0x60, 0x1F];
 const DEFAULT_RETRIES: u8 = 3;
+/// PIN of every emulated card unless a test sets another.
+pub const DEFAULT_PIN: &str = "TestPin1";
 
 /// File path below the master file.
 type Path = Vec<[u8; 2]>;
@@ -63,6 +66,23 @@ pub struct EmulatedDnie {
     channel: Option<CardChannel>,
     retries: u8,
     retries_answer: Option<u16>,
+    pin: Vec<u8>,
+    pin_verified: bool,
+    user_channel: bool,
+    holder_keys: BTreeMap<[u8; 2], RsaPrivateKey>,
+    signing_key: Option<[u8; 2]>,
+    transactions: usize,
+    commands: usize,
+    pin_queries: Vec<PinQuery>,
+}
+
+/// A `VERIFY` the card received.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PinQuery {
+    /// Number of the transaction it arrived in, from 1.
+    pub transaction: usize,
+    /// Whether it carried a PIN rather than asking for the retries.
+    pub with_pin: bool,
 }
 
 struct File {
@@ -91,6 +111,14 @@ impl EmulatedDnie {
             channel: None,
             retries: DEFAULT_RETRIES,
             retries_answer: None,
+            pin: DEFAULT_PIN.as_bytes().to_vec(),
+            pin_verified: false,
+            user_channel: false,
+            holder_keys: BTreeMap::new(),
+            signing_key: None,
+            transactions: 0,
+            commands: 0,
+            pin_queries: Vec::new(),
         }
     }
 
@@ -117,6 +145,21 @@ impl EmulatedDnie {
     pub fn tampering_internal_authentication(mut self) -> Self {
         self.chip_mut().tamper_internal_authentication = true;
         self
+    }
+
+    /// Whether the holder's PIN is verified on the card right now.
+    pub fn pin_verified(&self) -> bool {
+        self.pin_verified
+    }
+
+    /// Every `VERIFY` the card received, in order.
+    pub fn pin_queries(&self) -> &[PinQuery] {
+        &self.pin_queries
+    }
+
+    /// APDUs the card received.
+    pub fn commands(&self) -> usize {
+        self.commands
     }
 
     /// The randomness of every handshake the card accepted.
@@ -154,9 +197,14 @@ impl EmulatedDnie {
 
     /// Stores the certificates with the CDF and PrKDF that describe them.
     pub fn with_certificates(self, certificates: &[HolderCertificate]) -> Self {
-        let card = certificates.iter().fold(self, |card, certificate| {
+        let mut card = certificates.iter().fold(self, |card, certificate| {
             card.with_file(&[certificate.file], certificate.stored())
         });
+        for certificate in certificates {
+            if let (Some(file), Some(key)) = (certificate.key_file, &certificate.key) {
+                card.holder_keys.insert(file, key.clone());
+            }
+        }
         card.with_file(&pkcs15::CDF, pkcs15::cdf(certificates))
             .with_file(&pkcs15::PRKDF, pkcs15::prkdf(certificates))
     }
@@ -189,6 +237,7 @@ impl EmulatedDnie {
             },
             (EXTERNAL_AUTHENTICATE, _, _) => {
                 self.channel = self.chip_mut().external_authenticate(apdu.data, CHALLENGE);
+                self.user_channel = self.chip_mut().user_terminal();
                 if self.channel.is_some() {
                     vec![0x90, 0x00]
                 } else {
@@ -209,8 +258,20 @@ impl EmulatedDnie {
             self.channel = None;
             return vec![0x66, 0x88];
         };
-        let answer = if inner.ins == VERIFY && inner.data.is_empty() {
-            self.retries_status().to_be_bytes().to_vec()
+        let answer = if inner.ins == VERIFY {
+            self.pin_queries.push(PinQuery {
+                transaction: self.transactions,
+                with_pin: !inner.data.is_empty(),
+            });
+            if inner.data.is_empty() {
+                self.retries_status().to_be_bytes().to_vec()
+            } else {
+                self.verify_pin(&inner.data).to_be_bytes().to_vec()
+            }
+        } else if (inner.ins, inner.p1, inner.p2) == (MSE, 0x41, 0xB6) {
+            self.select_signing_key(&inner.data).to_be_bytes().to_vec()
+        } else if (inner.ins, inner.p1, inner.p2) == (PSO, 0x9E, 0x9A) {
+            self.sign(&inner.data)
         } else {
             let delivery = std::mem::replace(&mut self.delivery, Delivery::Direct);
             let answer = self.answer(&Apdu {
@@ -227,6 +288,50 @@ impl EmulatedDnie {
             .as_mut()
             .expect("the channel survives its own commands")
             .wrap(&answer)
+    }
+
+    fn verify_pin(&mut self, pin: &[u8]) -> u16 {
+        if self.user_channel {
+            return 0x6982;
+        }
+        if self.retries == 0 {
+            return 0x6983;
+        }
+        if pin == self.pin {
+            self.pin_verified = true;
+            self.retries = DEFAULT_RETRIES;
+            return 0x9000;
+        }
+        self.retries -= 1;
+        self.retries_status()
+    }
+
+    /// `MSE SET DST` data `84 02 <key file>`.
+    fn select_signing_key(&mut self, data: &[u8]) -> u16 {
+        match data {
+            [0x84, 0x02, high, low] if self.holder_keys.contains_key(&[*high, *low]) => {
+                self.signing_key = Some([*high, *low]);
+                0x9000
+            }
+            _ => 0x6A88,
+        }
+    }
+
+    /// PKCS#1 v1.5 signature of a `DigestInfo`, only in the user channel with the PIN verified.
+    fn sign(&mut self, digest_info: &[u8]) -> Vec<u8> {
+        if !self.user_channel || !self.pin_verified {
+            return vec![0x69, 0x82];
+        }
+        let Some(key) = self
+            .signing_key
+            .and_then(|file| self.holder_keys.get(&file))
+        else {
+            return vec![0x69, 0x85];
+        };
+        let signature = key
+            .sign(Pkcs1v15Sign::new_unprefixed(), digest_info)
+            .expect("DigestInfo fits the holder key");
+        with_status(signature, 0x9000)
     }
 
     fn retries_status(&self) -> u16 {
@@ -320,6 +425,7 @@ impl EmulatedDnie {
 
 impl Transport for EmulatedDnie {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        self.commands += 1;
         let protected = apdu.first().is_some_and(|cla| cla & PROTECTED == PROTECTED);
         if protected && self.channel.is_some() {
             return Ok(self.answer_protected(apdu));
@@ -338,6 +444,9 @@ impl Transport for EmulatedDnie {
         self.pending.clear();
         self.current.clear();
         self.channel = None;
+        self.user_channel = false;
+        self.pin_verified = false;
+        self.signing_key = None;
         if let Some(chip) = &mut self.chip {
             chip.reset();
         }
@@ -348,6 +457,7 @@ impl Transport for EmulatedDnie {
         &mut self,
         body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
     ) -> Result<R, Error> {
+        self.transactions += 1;
         body(self)
     }
 }

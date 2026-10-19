@@ -20,6 +20,7 @@ mod pin;
 mod pkcs15;
 mod secure_messaging;
 mod session;
+mod signature;
 mod transport;
 
 pub use apdu::{Command, Response, StatusWord};
@@ -28,5 +29,7 @@ pub use certificates::{Certificate, KeyReference};
 pub use error::Error;
 #[cfg(feature = "pcsc")]
 pub use pcsc_transport::PcscTransport;
+pub use pin::Pin;
 pub use session::Session;
+pub use signature::HashAlgorithm;
 pub use transport::Transport;

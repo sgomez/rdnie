@@ -40,6 +40,8 @@ const FRAME_END: u8 = 0xBC;
 pub struct TerminalKey {
     pub chr: [u8; 8],
     pub modulus: Vec<u8>,
+    /// Whether the key opens the user channel rather than the PIN channel.
+    pub user: bool,
 }
 
 impl TerminalKey {
@@ -118,6 +120,11 @@ impl Chip {
             tamper_internal_authentication: false,
             handshakes: Vec::new(),
         }
+    }
+
+    /// Whether the selected terminal key opens the user channel.
+    pub fn user_terminal(&self) -> bool {
+        self.terminal.as_ref().is_some_and(|terminal| terminal.user)
     }
 
     pub fn reset(&mut self) {

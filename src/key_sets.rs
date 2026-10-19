@@ -69,10 +69,6 @@ pub(crate) const ICC_PRIVATE_KEY_REFERENCE: [u8; 2] = [0x02, 0x1F];
 #[derive(Clone, Copy)]
 pub(crate) enum Channel {
     Pin,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the signing flow opens the user channel")
-    )]
     User,
 }
 
