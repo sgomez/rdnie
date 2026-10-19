@@ -1,0 +1,20 @@
+{
+  "extraKnownMarketplaces": {
+    "sgomez": {
+      "source": { "source": "github", "repo": "sgomez/developer-skills" }
+    }
+  },
+  "enabledPlugins": {
+    "developer-skills@sgomez": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(gh pr ready:*)",
+      "Bash(gh pr comment:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh api repos/sgomez/rdnie/pulls/*/reviews*)",
+      "Bash(git push origin refs/remotes/origin/main:refs/heads/agent/developer/spec-*)",
+      "Workflow"
+    ]
+  }
+}
