@@ -92,12 +92,18 @@ impl Transport for PcscTransport {
     ) -> Result<R, Error> {
         let mut transaction = InTransaction(self.card.transaction().map_err(transport)?);
         let result = body(&mut transaction);
-        transaction
+        let ended = transaction
             .0
             .end(Disposition::LeaveCard)
-            .map_err(|(_, error)| transport(error))?;
-        result
+            .map_err(|(_, error)| transport(error));
+        outcome(result, ended)
     }
+}
+
+/// The body's own error wins: a reset card also fails to end its transaction, which would hide it.
+fn outcome<R>(result: Result<R, Error>, ended: Result<(), Error>) -> Result<R, Error> {
+    let value = result?;
+    ended.map(|()| value)
 }
 
 /// The card while a PC/SC transaction holds it.
@@ -152,6 +158,18 @@ mod tests {
             transport(pcsc::Error::ResetCard),
             Error::CardReset
         ));
+    }
+
+    #[test]
+    fn keeps_the_body_error_over_a_failed_end() {
+        let outcome = outcome::<()>(Err(Error::CardReset), Err(Error::Transport("end".into())));
+        assert!(matches!(outcome, Err(Error::CardReset)));
+    }
+
+    #[test]
+    fn reports_a_failed_end_after_a_successful_body() {
+        let outcome = outcome(Ok(1), Err(Error::Transport("end".into())));
+        assert!(matches!(outcome, Err(Error::Transport(_))));
     }
 
     #[test]
