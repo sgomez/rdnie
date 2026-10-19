@@ -86,6 +86,25 @@ pub(crate) fn ca_component_public_key() -> RsaPublicKey {
         .expect("the embedded CA component key is valid")
 }
 
+/// Key generation the DGP issued the terminal keys in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyGeneration {
+    /// Cards with a support number below `BMP100001`.
+    First,
+    /// Later cards, and any card whose support number is unknown.
+    Second,
+}
+
+impl KeyGeneration {
+    pub(crate) fn of_card(idesp: Option<&str>) -> Self {
+        if idesp.is_some_and(|idesp| !idesp.is_empty() && idesp < R2_IDESP) {
+            Self::First
+        } else {
+            Self::Second
+        }
+    }
+}
+
 /// Channel a key set opens.
 #[derive(Clone, Copy)]
 pub(crate) enum Channel {
@@ -110,12 +129,11 @@ pub(crate) struct KeySet {
 impl KeySet {
     /// The set for `channel` on a card with `idesp`; the second generation if it is unknown.
     pub(crate) fn for_card(idesp: Option<&str>, channel: Channel) -> &'static Self {
-        let first_generation = idesp.is_some_and(|idesp| !idesp.is_empty() && idesp < R2_IDESP);
-        match (first_generation, channel) {
-            (true, Channel::Pin) => &R1_PIN,
-            (true, Channel::User) => &R1_USER,
-            (false, Channel::Pin) => &R2_PIN,
-            (false, Channel::User) => &R2_USER,
+        match (KeyGeneration::of_card(idesp), channel) {
+            (KeyGeneration::First, Channel::Pin) => &R1_PIN,
+            (KeyGeneration::First, Channel::User) => &R1_USER,
+            (KeyGeneration::Second, Channel::Pin) => &R2_PIN,
+            (KeyGeneration::Second, Channel::User) => &R2_USER,
         }
     }
 
