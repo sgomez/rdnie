@@ -52,7 +52,7 @@ use crate::{
     atr::check_dnie_3,
     certificates,
     files::{self, Location},
-    key_sets::ca_component_public_key,
+    key_sets::{KeyGeneration, ca_component_public_key},
     pin, signature,
 };
 
@@ -142,6 +142,12 @@ impl<T: Transport> Session<T> {
         })
     }
 
+    /// The terminal key generation the card's support number selects.
+    #[must_use]
+    pub fn key_generation(&self) -> KeyGeneration {
+        KeyGeneration::of_card(self.idesp.as_deref())
+    }
+
     /// Ends the session and hands back the transport.
     pub fn into_transport(self) -> T {
         self.transport
@@ -182,7 +188,7 @@ pub(crate) mod tests {
     use x509_cert::der::{Decode, Encode};
 
     use crate::{
-        Error, HashAlgorithm, Pin, StatusWord,
+        Error, HashAlgorithm, KeyGeneration, Pin, StatusWord,
         emulator::{
             DEFAULT_PIN, DNIE_3_ATR, EmulatedDnie, HolderCertificate, TerminalKey, ca_public_key,
         },
@@ -367,6 +373,18 @@ pub(crate) mod tests {
         let card = EmulatedDnie::new(&DNIE_3_ATR).with_idesp(b"TST000042");
         let session = Session::open(card).unwrap();
         assert_eq!(session.idesp.as_deref(), Some("TST000042"));
+    }
+
+    #[test]
+    fn reports_the_key_generation_of_the_card() {
+        let generation = |idesp: &[u8]| {
+            let card = EmulatedDnie::new(&DNIE_3_ATR).with_idesp(idesp);
+            Session::open(card).unwrap().key_generation()
+        };
+        assert_eq!(generation(b"BMP100000"), KeyGeneration::First);
+        assert_eq!(generation(b"BMP100001"), KeyGeneration::Second);
+        let bare = Session::open(EmulatedDnie::new(&DNIE_3_ATR)).unwrap();
+        assert_eq!(bare.key_generation(), KeyGeneration::Second);
     }
 
     #[test]
