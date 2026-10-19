@@ -66,7 +66,19 @@ impl Pin {
     pub fn new(pin: String) -> Self {
         Self(Zeroizing::new(pin))
     }
+
+    /// Refuses a PIN that is not 8 to 16 printable ASCII characters, before any APDU is sent.
+    pub(crate) fn check_format(&self) -> Result<(), Error> {
+        let printable = self.0.bytes().all(|byte| (b' '..=b'~').contains(&byte));
+        if PIN_LENGTH.contains(&self.0.len()) && printable {
+            Ok(())
+        } else {
+            Err(Error::InvalidPinFormat)
+        }
+    }
 }
+
+const PIN_LENGTH: std::ops::RangeInclusive<usize> = 8..=16;
 const RETRIES_LEFT: u8 = 0x63;
 const RETRIES_MASK: u8 = 0xF0;
 const RETRIES_TAG: u8 = 0xC0;
@@ -82,15 +94,23 @@ pub(crate) fn retries_left(
     query_retries(&mut channel, card)
 }
 
-/// Rereads the retries, sends `pin` once through the PIN channel and returns the user channel.
+/// Rereads the retries and, if they are still `expected` and not zero, sends `pin` once through
+/// the PIN channel and returns the user channel.
 pub(crate) fn verify(
     card: &mut dyn Transport,
     idesp: Option<&str>,
     ca_key: &RsaPublicKey,
     pin: Pin,
+    expected: u8,
 ) -> Result<SecureMessaging, Error> {
     let mut channel = open_pin_channel(card, idesp, ca_key)?;
-    query_retries(&mut channel, card)?;
+    let retries = query_retries(&mut channel, card)?;
+    if retries == 0 {
+        return Err(Error::PinBlocked);
+    }
+    if retries != expected {
+        return Err(Error::PinRetriesChanged);
+    }
     let mut command = Command {
         cla: 0x00,
         ins: VERIFY,
@@ -102,8 +122,28 @@ pub(crate) fn verify(
     drop(pin);
     let response = channel.transmit(card, &command);
     command.data.zeroize();
-    response?.into_success()?;
+    let response = response?;
+    if response.status != StatusWord::SUCCESS {
+        return Err(refusal(response.status));
+    }
     open_user_channel(&mut channel, card, idesp, ca_key)
+}
+
+/// What a status word other than success means for a `VERIFY` that carried the PIN.
+fn refusal(status: StatusWord) -> Error {
+    match retries_in(status) {
+        Some(retries_left) if retries_left > 0 => Error::WrongPin { retries_left },
+        Some(_) => Error::PinBlocked,
+        None if status == BLOCKED => Error::PinBlocked,
+        None => Error::Status(status),
+    }
+}
+
+fn retries_in(status: StatusWord) -> Option<u8> {
+    match status.0.to_be_bytes() {
+        [RETRIES_LEFT, sw2] if sw2 & RETRIES_MASK == RETRIES_TAG => Some(sw2 & !RETRIES_MASK),
+        _ => None,
+    }
 }
 
 fn query_retries(channel: &mut SecureMessaging, card: &mut dyn Transport) -> Result<u8, Error> {
@@ -118,10 +158,10 @@ fn query_retries(channel: &mut SecureMessaging, card: &mut dyn Transport) -> Res
             le: Some(256),
         },
     )?;
-    match response.status.0.to_be_bytes() {
-        [RETRIES_LEFT, sw2] if sw2 & RETRIES_MASK == RETRIES_TAG => Ok(sw2 & !RETRIES_MASK),
-        _ if response.status == BLOCKED => Err(Error::PinBlocked),
-        _ => Err(Error::Status(response.status)),
+    match retries_in(response.status) {
+        Some(retries) => Ok(retries),
+        None if response.status == BLOCKED => Err(Error::PinBlocked),
+        None => Err(Error::Status(response.status)),
     }
 }
 

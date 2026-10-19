@@ -74,6 +74,7 @@ pub struct EmulatedDnie {
     transactions: usize,
     commands: usize,
     pin_queries: Vec<PinQuery>,
+    retry_lost_on_reset: bool,
     fault: Option<Fault>,
 }
 
@@ -128,6 +129,7 @@ impl EmulatedDnie {
             transactions: 0,
             commands: 0,
             pin_queries: Vec::new(),
+            retry_lost_on_reset: false,
             fault: None,
         }
     }
@@ -157,6 +159,12 @@ impl EmulatedDnie {
         self
     }
 
+    /// Sets the PIN the card accepts.
+    pub fn with_pin(mut self, pin: &str) -> Self {
+        self.pin = pin.as_bytes().to_vec();
+        self
+    }
+
     /// Answers the retries query with `status` whatever the PIN state.
     pub fn answering_retries_with(mut self, status: u16) -> Self {
         self.retries_answer = Some(status);
@@ -166,6 +174,13 @@ impl EmulatedDnie {
     /// Corrupts `Kicc` in the internal authentication answer after hashing it.
     pub fn tampering_internal_authentication(mut self) -> Self {
         self.chip_mut().tamper_internal_authentication = true;
+        self
+    }
+
+    /// Burns one PIN attempt at the first reset after the retries were read, as another process
+    /// trying a PIN between the two phases would.
+    pub fn losing_a_retry_between_phases(mut self) -> Self {
+        self.retry_lost_on_reset = true;
         self
     }
 
@@ -503,6 +518,10 @@ impl Transport for EmulatedDnie {
         self.user_channel = false;
         self.pin_verified = false;
         self.signing_key = None;
+        if self.retry_lost_on_reset && !self.pin_queries.is_empty() {
+            self.retry_lost_on_reset = false;
+            self.retries = self.retries.saturating_sub(1);
+        }
         if let Some(chip) = &mut self.chip {
             chip.reset();
         }

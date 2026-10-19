@@ -123,8 +123,10 @@ impl<T: Transport> Session<T> {
     ///
     /// # Errors
     ///
-    /// [`Error::DigestLength`] before touching the card, those of [`Session::pin_retries`] and
-    /// [`Error::Status`] if the card refuses the PIN or the signature.
+    /// [`Error::InvalidPinFormat`] and [`Error::DigestLength`] before touching the card, those of
+    /// [`Session::pin_retries`], [`Error::PinRetriesChanged`] if the retries moved between the two
+    /// phases, [`Error::WrongPin`] after the single attempt and [`Error::Status`] if the card
+    /// refuses the signature.
     pub fn sign(
         &mut self,
         digest: &[u8],
@@ -132,12 +134,16 @@ impl<T: Transport> Session<T> {
         key: &KeyReference,
         pin: Pin,
     ) -> Result<Vec<u8>, Error> {
+        pin.check_format()?;
         let digest_info = signature::digest_info(algorithm, digest)?;
-        self.pin_retries()?;
+        let retries = self.pin_retries()?;
+        if retries == 0 {
+            return Err(Error::PinBlocked);
+        }
         let idesp = self.idesp.as_deref();
         let ca_key = &self.ca_key;
         operation(&mut self.transport, |card| {
-            let mut channel = pin::verify(card, idesp, ca_key, pin)?;
+            let mut channel = pin::verify(card, idesp, ca_key, pin, retries)?;
             signature::sign(&mut channel, card, key, digest_info)
         })
     }
@@ -366,6 +372,83 @@ pub(crate) mod tests {
         );
         assert!(matches!(result, Err(Error::Status(StatusWord(0x6A88)))));
         assert!(!session.transport.pin_verified());
+    }
+
+    fn sign_with_pin(card: EmulatedDnie, pin: &str) -> (Result<Vec<u8>, Error>, EmulatedDnie) {
+        let mut session = open(card);
+        let key = session.certificates().unwrap().remove(0).key;
+        let result = session.sign(
+            &[0; 32],
+            HashAlgorithm::Sha256,
+            &key,
+            Pin::new(pin.to_owned()),
+        );
+        (result, session.into_transport())
+    }
+
+    #[test]
+    fn rejects_a_malformed_pin_without_any_apdu() {
+        let too_long = "a".repeat(17);
+        for pin in ["short", "ñandúñandú", "tab\tcharacter", too_long.as_str()] {
+            let mut session = open(signing_card());
+            let key = session.certificates().unwrap().remove(0).key;
+            let sent = session.transport.commands();
+            let result = session.sign(
+                &[0; 32],
+                HashAlgorithm::Sha256,
+                &key,
+                Pin::new(pin.to_owned()),
+            );
+            assert!(matches!(result, Err(Error::InvalidPinFormat)), "{pin:?}");
+            assert_eq!(session.transport.commands(), sent);
+        }
+    }
+
+    #[test]
+    fn accepts_the_pin_length_limits() {
+        for pin in ["12345678", "1234567890123456"] {
+            let card = signing_card().with_pin(pin);
+            assert!(sign_with_pin(card, pin).0.is_ok(), "{pin}");
+        }
+    }
+
+    #[test]
+    fn sends_no_verify_to_a_blocked_pin() {
+        let (result, card) = sign_with_pin(signing_card().with_pin_retries(0), DEFAULT_PIN);
+        assert!(matches!(result, Err(Error::PinBlocked)));
+        assert!(card.pin_queries().iter().all(|query| !query.with_pin));
+    }
+
+    #[test]
+    fn makes_one_attempt_with_a_wrong_pin_and_reports_the_retries() {
+        let (result, card) = sign_with_pin(signing_card(), "WrongPin1");
+        assert!(matches!(result, Err(Error::WrongPin { retries_left: 2 })));
+        let attempts = card.pin_queries().iter().filter(|query| query.with_pin);
+        assert_eq!(attempts.count(), 1);
+        assert!(!card.pin_verified());
+    }
+
+    #[test]
+    fn reports_a_blocked_pin_when_the_attempt_exhausts_it() {
+        let card = signing_card().with_pin_retries(1);
+        let (result, _) = sign_with_pin(card, "WrongPin1");
+        assert!(matches!(result, Err(Error::PinBlocked)));
+    }
+
+    #[test]
+    fn aborts_before_verify_when_the_retries_changed_between_phases() {
+        let card = signing_card().losing_a_retry_between_phases();
+        let (result, card) = sign_with_pin(card, DEFAULT_PIN);
+        assert!(matches!(result, Err(Error::PinRetriesChanged)));
+        assert!(card.pin_queries().iter().all(|query| !query.with_pin));
+    }
+
+    #[test]
+    fn aborts_before_verify_when_no_retry_is_left() {
+        let card = signing_card().answering_retries_with(0x63C0);
+        let (result, card) = sign_with_pin(card, DEFAULT_PIN);
+        assert!(matches!(result, Err(Error::PinBlocked)));
+        assert!(card.pin_queries().iter().all(|query| !query.with_pin));
     }
 
     #[test]

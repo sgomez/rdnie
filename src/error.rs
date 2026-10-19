@@ -39,6 +39,18 @@ pub enum Error {
     /// The PIN is blocked: no attempt is left.
     #[error("the PIN is blocked")]
     PinBlocked,
+    /// The PIN is not 8 to 16 printable ASCII characters.
+    #[error("the PIN must be 8 to 16 printable ASCII characters")]
+    InvalidPinFormat,
+    /// The card refused the PIN.
+    #[error("wrong PIN, {retries_left} attempts left")]
+    WrongPin {
+        /// Attempts the card still allows.
+        retries_left: u8,
+    },
+    /// The retries changed between reading them and verifying the PIN.
+    #[error("the PIN retries changed since they were read")]
+    PinRetriesChanged,
     /// The digest is not as long as its hash algorithm makes them.
     #[error("digest of {actual} bytes where its algorithm gives {expected}")]
     DigestLength {
