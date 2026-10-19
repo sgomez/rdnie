@@ -101,7 +101,7 @@ pub trait Transport {
 }
 
 const RESPONSE_PENDING: u8 = 0x61;
-const WRONG_LENGTH: u8 = 0x6C;
+pub(crate) const WRONG_LENGTH: u8 = 0x6C;
 // Protected commands are resent by the secure channel, not here.
 const PLAIN_CLA: u8 = 0x00;
 
@@ -116,7 +116,7 @@ fn get_response(le: u8) -> Command {
     }
 }
 
-fn short_le(le: u8) -> u16 {
+pub(crate) fn short_le(le: u8) -> u16 {
     match le {
         0 => 256,
         le => le.into(),

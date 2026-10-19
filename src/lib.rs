@@ -15,6 +15,11 @@ mod files;
 #[cfg(feature = "pcsc")]
 mod pcsc_transport;
 mod pkcs15;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the CWA-14890 channel is its caller")
+)]
+mod secure_messaging;
 mod session;
 mod transport;
 
