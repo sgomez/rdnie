@@ -36,6 +36,9 @@ pub enum Error {
     /// A PKCS#15 directory file on the card cannot be decoded.
     #[error("malformed PKCS#15 directory")]
     MalformedPkcs15,
+    /// The PIN is blocked: no attempt is left.
+    #[error("the PIN is blocked")]
+    PinBlocked,
     /// The card was reset, so any state built on it is lost.
     #[error("the card was reset")]
     CardReset,

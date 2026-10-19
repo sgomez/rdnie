@@ -1,0 +1,3 @@
+[advisories]
+# Marvin attack on rsa: rdnie's only RSA private keys are the DGP terminal keys, public by design.
+ignore = ["RUSTSEC-2023-0071"]

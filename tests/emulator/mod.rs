@@ -2,12 +2,17 @@
 // Each test crate uses a different part of the emulator.
 #![allow(dead_code)]
 
+mod channel;
+mod chip;
 mod pkcs15;
 
 use std::collections::BTreeMap;
 
 use rdnie::{Error, Transport};
 
+use channel::CardChannel;
+use chip::Chip;
+pub use chip::{Handshake, TerminalKey};
 pub use pkcs15::HolderCertificate;
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
@@ -20,9 +25,18 @@ const SELECT: u8 = 0xA4;
 const READ_BINARY: u8 = 0xB0;
 const GET_CHALLENGE: u8 = 0x84;
 const GET_RESPONSE: u8 = 0xC0;
-const CHALLENGE_LENGTH: usize = 8;
+const GET_CHIP_INFO: u8 = 0xB8;
+const MSE: u8 = 0x22;
+const PSO: u8 = 0x2A;
+const INTERNAL_AUTHENTICATE: u8 = 0x88;
+const EXTERNAL_AUTHENTICATE: u8 = 0x82;
+const VERIFY: u8 = 0x20;
+const CHALLENGE: [u8; 8] = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7];
+const PROTECTED: u8 = 0x0C;
 const MASTER_FILE_NAME: &[u8] = b"Master.File";
 const IDESP: [u8; 2] = [0x00, 0x06];
+const ICC_CERTIFICATE: [u8; 2] = [0x60, 0x1F];
+const DEFAULT_RETRIES: u8 = 3;
 
 /// File path below the master file.
 type Path = Vec<[u8; 2]>;
@@ -45,6 +59,10 @@ pub struct EmulatedDnie {
     pending: Vec<u8>,
     files: BTreeMap<Path, File>,
     current: Path,
+    chip: Option<Chip>,
+    channel: Option<CardChannel>,
+    retries: u8,
+    retries_answer: Option<u16>,
 }
 
 struct File {
@@ -69,7 +87,45 @@ impl EmulatedDnie {
             pending: Vec::new(),
             files: BTreeMap::new(),
             current: Vec::new(),
+            chip: None,
+            channel: None,
+            retries: DEFAULT_RETRIES,
+            retries_answer: None,
         }
+    }
+
+    /// Lets the card open a CWA-14890 channel with any of `terminals`.
+    pub fn with_secure_channel(self, terminals: &[TerminalKey]) -> Self {
+        let mut card = self.with_file(&[ICC_CERTIFICATE], chip::component_certificate());
+        card.chip = Some(Chip::new(terminals));
+        card
+    }
+
+    /// PIN attempts left; 0 means blocked.
+    pub fn with_pin_retries(mut self, retries: u8) -> Self {
+        self.retries = retries;
+        self
+    }
+
+    /// Answers the retries query with `status` whatever the PIN state.
+    pub fn answering_retries_with(mut self, status: u16) -> Self {
+        self.retries_answer = Some(status);
+        self
+    }
+
+    /// Corrupts `Kicc` in the internal authentication answer after hashing it.
+    pub fn tampering_internal_authentication(mut self) -> Self {
+        self.chip_mut().tamper_internal_authentication = true;
+        self
+    }
+
+    /// The randomness of every handshake the card accepted.
+    pub fn handshakes(&self) -> &[Handshake] {
+        self.chip.as_ref().map_or(&[], |chip| &chip.handshakes)
+    }
+
+    fn chip_mut(&mut self) -> &mut Chip {
+        self.chip.as_mut().expect("secure channel enabled before")
     }
 
     pub fn delivering(mut self, delivery: Delivery) -> Self {
@@ -109,13 +165,75 @@ impl EmulatedDnie {
         match apdu.ins {
             SELECT => self.select(apdu),
             READ_BINARY => self.read_binary(apdu),
-            GET_CHALLENGE => {
-                let challenge: Vec<u8> = (0xA0..).take(CHALLENGE_LENGTH).collect();
-                self.deliver(challenge, apdu.le)
-            }
+            GET_CHALLENGE => self.deliver(CHALLENGE.to_vec(), apdu.le),
             GET_RESPONSE if !self.pending.is_empty() => self.serve_pending(apdu.le.unwrap_or(256)),
             GET_RESPONSE => vec![0x69, 0x85],
+            _ if self.chip.is_some() => self.authenticate(apdu),
             _ => vec![0x6D, 0x00],
+        }
+    }
+
+    fn authenticate(&mut self, apdu: &Apdu) -> Vec<u8> {
+        match (apdu.ins, apdu.p1, apdu.p2) {
+            (GET_CHIP_INFO, _, _) => self.deliver(chip::SERIAL.to_vec(), apdu.le),
+            (MSE, 0x81, 0xB6) | (PSO, 0x00, 0xAE) => vec![0x90, 0x00],
+            (MSE, 0xC1, 0xA4) => self
+                .chip_mut()
+                .select_terminal(apdu.data)
+                .to_be_bytes()
+                .to_vec(),
+            (INTERNAL_AUTHENTICATE, _, _) => match self.chip_mut().internal_authenticate(apdu.data)
+            {
+                Ok(answer) => self.deliver(answer, apdu.le),
+                Err(status) => status.to_be_bytes().to_vec(),
+            },
+            (EXTERNAL_AUTHENTICATE, _, _) => {
+                self.channel = self.chip_mut().external_authenticate(apdu.data, CHALLENGE);
+                if self.channel.is_some() {
+                    vec![0x90, 0x00]
+                } else {
+                    vec![0x63, 0x00]
+                }
+            }
+            (VERIFY, _, _) => vec![0x69, 0x82],
+            _ => vec![0x6D, 0x00],
+        }
+    }
+
+    fn answer_protected(&mut self, apdu: &[u8]) -> Vec<u8> {
+        let channel = self
+            .channel
+            .as_mut()
+            .expect("protected only with a channel");
+        let Some(inner) = channel.unwrap(apdu) else {
+            self.channel = None;
+            return vec![0x66, 0x88];
+        };
+        let answer = if inner.ins == VERIFY && inner.data.is_empty() {
+            self.retries_status().to_be_bytes().to_vec()
+        } else {
+            let delivery = std::mem::replace(&mut self.delivery, Delivery::Direct);
+            let answer = self.answer(&Apdu {
+                ins: inner.ins,
+                p1: inner.p1,
+                p2: inner.p2,
+                data: &inner.data,
+                le: inner.le,
+            });
+            self.delivery = delivery;
+            answer
+        };
+        self.channel
+            .as_mut()
+            .expect("the channel survives its own commands")
+            .wrap(&answer)
+    }
+
+    fn retries_status(&self) -> u16 {
+        match (self.retries_answer, self.retries) {
+            (Some(status), _) => status,
+            (None, 0) => 0x6983,
+            (None, retries) => 0x63C0 | u16::from(retries),
         }
     }
 
@@ -202,11 +320,16 @@ impl EmulatedDnie {
 
 impl Transport for EmulatedDnie {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        let protected = apdu.first().is_some_and(|cla| cla & PROTECTED == PROTECTED);
+        if protected && self.channel.is_some() {
+            return Ok(self.answer_protected(apdu));
+        }
         let Some(apdu) = parse(apdu) else {
             return Ok(vec![0x67, 0x00]);
         };
         if apdu.ins != GET_RESPONSE {
             self.pending.clear();
+            self.channel = None;
         }
         Ok(self.answer(&apdu))
     }
@@ -214,6 +337,10 @@ impl Transport for EmulatedDnie {
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         self.pending.clear();
         self.current.clear();
+        self.channel = None;
+        if let Some(chip) = &mut self.chip {
+            chip.reset();
+        }
         Ok(self.atr.clone())
     }
 
