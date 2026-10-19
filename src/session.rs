@@ -45,11 +45,14 @@
 //! Session with a DNIe 3.0/4.0, opened as `DnieFactory.getDnie` and `Dnie3` do: reset, classify
 //! the ATR, read the IDESP.
 
+use rsa::RsaPublicKey;
+
 use crate::{
     Certificate, Error, Transport,
     atr::check_dnie_3,
     certificates,
     files::{self, Location},
+    key_sets::ca_component_public_key,
     pin,
 };
 
@@ -60,6 +63,7 @@ pub struct Session<T: Transport> {
     transport: T,
     /// Support number, which picks the channel key set; card data, so never logged.
     idesp: Option<String>,
+    ca_key: RsaPublicKey,
 }
 
 impl<T: Transport> Session<T> {
@@ -69,12 +73,25 @@ impl<T: Transport> Session<T> {
     ///
     /// Those of [`Transport::transaction`], [`Transport::reset`], [`Error::NotDnie`],
     /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`].
-    pub fn open(mut transport: T) -> Result<Self, Error> {
+    pub fn open(transport: T) -> Result<Self, Error> {
+        Self::open_trusting(transport, ca_component_public_key())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_with_ca_key(transport: T, ca_key: RsaPublicKey) -> Result<Self, Error> {
+        Self::open_trusting(transport, ca_key)
+    }
+
+    fn open_trusting(mut transport: T, ca_key: RsaPublicKey) -> Result<Self, Error> {
         let idesp = transport.transaction(|card| {
             check_dnie_3(&card.reset()?)?;
             Ok(read_idesp(card))
         })?;
-        Ok(Self { transport, idesp })
+        Ok(Self {
+            transport,
+            idesp,
+            ca_key,
+        })
     }
 
     /// Lists the holder's certificates that have a private key, without a PIN.
@@ -98,9 +115,10 @@ impl<T: Transport> Session<T> {
     /// authentication fails and [`Error::Status`] if the card gives no retry count.
     pub fn pin_retries(&mut self) -> Result<u8, Error> {
         let idesp = self.idesp.as_deref();
+        let ca_key = &self.ca_key;
         self.transport.transaction(|card| {
             check_dnie_3(&card.reset()?)?;
-            pin::retries_left(card, idesp)
+            pin::retries_left(card, idesp, ca_key)
         })
     }
 
@@ -122,7 +140,7 @@ pub(crate) mod tests {
     use super::Session;
     use crate::{
         Error, StatusWord,
-        emulator::{DNIE_3_ATR, EmulatedDnie, TerminalKey},
+        emulator::{DNIE_3_ATR, EmulatedDnie, TerminalKey, ca_public_key},
         key_sets::{KeySet, R1_PIN, R1_USER, R2_PIN, R2_USER},
     };
 
@@ -141,8 +159,12 @@ pub(crate) mod tests {
         card_accepting(&[&R1_PIN, &R1_USER, &R2_PIN, &R2_USER])
     }
 
+    pub(crate) fn open(card: EmulatedDnie) -> Session<EmulatedDnie> {
+        Session::open_with_ca_key(card, ca_public_key()).unwrap()
+    }
+
     fn retries(card: EmulatedDnie) -> Result<u8, Error> {
-        Session::open(card).unwrap().pin_retries()
+        open(card).pin_retries()
     }
 
     #[test]
@@ -224,7 +246,7 @@ pub(crate) mod tests {
             card_with_channel().corrupting_a_response_mac(),
         ];
         for card in faulty {
-            let mut session = Session::open(card.with_pin_retries(2)).unwrap();
+            let mut session = open(card.with_pin_retries(2));
             assert!(session.pin_retries().is_err());
             assert_eq!(session.pin_retries().unwrap(), 2);
         }

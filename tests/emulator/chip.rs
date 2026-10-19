@@ -60,19 +60,29 @@ pub struct Handshake {
 }
 
 struct Pki {
+    ca: RsaPublicKey,
     icc: RsaPrivateKey,
     component_certificate: Vec<u8>,
+    foreign_component_certificate: Vec<u8>,
 }
 
 static PKI: LazyLock<Pki> = LazyLock::new(|| {
     let ca = RsaPrivateKey::new(&mut OsRng, KEY_LENGTH * 8).unwrap();
+    let other_ca = RsaPrivateKey::new(&mut OsRng, KEY_LENGTH * 8).unwrap();
     let icc = RsaPrivateKey::new(&mut OsRng, KEY_LENGTH * 8).unwrap();
-    let signer = SigningKey::<Sha256>::new(ca);
-    let spki = SubjectPublicKeyInfoOwned::from_der(
-        icc.to_public_key().to_public_key_der().unwrap().as_bytes(),
-    )
-    .unwrap();
-    let certificate = CertificateBuilder::new(
+    Pki {
+        ca: ca.to_public_key(),
+        component_certificate: issue(&ca, &icc.to_public_key()),
+        foreign_component_certificate: issue(&other_ca, &icc.to_public_key()),
+        icc,
+    }
+});
+
+fn issue(ca: &RsaPrivateKey, icc: &RsaPublicKey) -> Vec<u8> {
+    let signer = SigningKey::<Sha256>::new(ca.clone());
+    let spki =
+        SubjectPublicKeyInfoOwned::from_der(icc.to_public_key_der().unwrap().as_bytes()).unwrap();
+    CertificateBuilder::new(
         Profile::Leaf {
             issuer: Name::from_str("CN=Test component CA").unwrap(),
             enable_key_agreement: false,
@@ -86,16 +96,24 @@ static PKI: LazyLock<Pki> = LazyLock::new(|| {
     )
     .unwrap()
     .build::<Signature>()
-    .unwrap();
-    Pki {
-        icc,
-        component_certificate: certificate.to_der().unwrap(),
-    }
-});
+    .unwrap()
+    .to_der()
+    .unwrap()
+}
 
-/// The X.509 component certificate the card stores at `3F00/601F`.
+/// The X.509 component certificate the card stores at `3F00/601F`, signed by the test CA.
 pub fn component_certificate() -> Vec<u8> {
     PKI.component_certificate.clone()
+}
+
+/// A component certificate for the same ICC key, signed by a CA the driver does not trust.
+pub fn foreign_component_certificate() -> Vec<u8> {
+    PKI.foreign_component_certificate.clone()
+}
+
+/// The public key of the test CA that signs the component certificate.
+pub fn ca_public_key() -> RsaPublicKey {
+    PKI.ca.clone()
 }
 
 /// Handshake state between the commands of one mutual authentication.
@@ -106,6 +124,7 @@ pub struct Chip {
     kicc: [u8; SEED_LENGTH],
     pub tamper_internal_authentication: bool,
     pub handshakes: Vec<Handshake>,
+    pub internal_authentications: usize,
 }
 
 impl Chip {
@@ -117,6 +136,7 @@ impl Chip {
             kicc: [0; SEED_LENGTH],
             tamper_internal_authentication: false,
             handshakes: Vec::new(),
+            internal_authentications: 0,
         }
     }
 
@@ -172,6 +192,7 @@ impl Chip {
         let sigmin = (icc.n() - &sig).min(sig);
         let answer = rsa::hazmat::rsa_encrypt(&terminal.public_key(), &sigmin).unwrap();
         self.rnd_ifd = Some(rnd_ifd);
+        self.internal_authentications += 1;
         Ok(left_padded(&answer))
     }
 
