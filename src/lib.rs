@@ -5,6 +5,11 @@ mod atr;
 mod error;
 #[cfg(feature = "pcsc")]
 mod pcsc_transport;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the CWA-14890 channel is its caller")
+)]
+mod secure_messaging;
 mod transport;
 
 pub use apdu::{Command, Response, StatusWord};

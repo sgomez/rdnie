@@ -15,6 +15,12 @@ pub enum Error {
     /// The command does not fit in a short APDU.
     #[error("{0} bytes do not fit in a short APDU")]
     CommandTooLong(usize),
+    /// A secure messaging response failed its MAC check or is malformed.
+    #[error("secure channel failed: {0}")]
+    SecureChannel(&'static str),
+    /// The card answered `66 88`: it no longer recognises the secure channel.
+    #[error("secure channel lost")]
+    ChannelLost,
     /// No reader holds a DNIe.
     #[error("no DNIe in any reader")]
     NoDnie,

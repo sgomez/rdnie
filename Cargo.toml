@@ -19,8 +19,13 @@ name = "detect"
 required-features = ["pcsc"]
 
 [dependencies]
+cbc = { version = "0.2", features = ["alloc"] }
+des = "0.9"
 pcsc = { version = "2.9", optional = true }
+retail-mac = "0.1"
+sha1 = "0.11"
 thiserror = "2"
+zeroize = "1"
 
 [lints.rust]
 unsafe_code = "forbid"
