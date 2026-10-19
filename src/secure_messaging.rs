@@ -7,6 +7,10 @@
 // - es.gob.jmulticard.connection.cwa14890.Cwa14890CipheredApdu (Carlos Gamuci, Alberto Martínez,
 //   Tomás García-Merás)
 // - es.gob.jmulticard.connection.cwa14890.Cwa14890OneV1Connection (Carlos Gamuci, Tomás García-Merás)
+// - es.gob.jmulticard.connection.cwa14890.InvalidCryptographicChecksumException (Tomás García-Merás)
+// - es.gob.jmulticard.connection.cwa14890.SecureChannelException (Carlos Gamuci Millán,
+//   Tomás García-Merás)
+// - es.gob.jmulticard.connection.LostChannelException (Tomás García-Merás)
 // rdnie takes the EUPL 1.1+ branch of the dual licence below.
 //
 // Controlador Java de la Secretaria de Estado de Administraciones Publicas
@@ -559,6 +563,27 @@ mod tests {
             .unwrap();
         assert_eq!(response.status, StatusWord::SUCCESS);
         assert!(card.sent[1].windows(3).any(|tlv| tlv == [0x97, 0x01, 0x10]));
+    }
+
+    #[test]
+    fn returns_other_inner_warnings_without_resending() {
+        for status in [[0x62, 0x82], [0x61, 0x10], [0x63, 0xC2]] {
+            let mut sender = jmulticard_session();
+            let mut objects = vec![TAG_STATUS, 0x02, status[0], status[1]];
+            sender.ssc += 2;
+            let mac = sender.mac(&objects);
+            push_tlv(&mut objects, TAG_MAC, &mac);
+            objects.extend([0x90, 0x00]);
+            let mut card = ScriptedCard {
+                responses: vec![objects],
+                sent: vec![],
+            };
+            let response = jmulticard_session()
+                .transmit(&mut card, &select(b"Master.File".to_vec()))
+                .unwrap();
+            assert_eq!(response.status, StatusWord(u16::from_be_bytes(status)));
+            assert_eq!(card.sent.len(), 1);
+        }
     }
 
     #[test]

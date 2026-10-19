@@ -197,4 +197,36 @@ pub(crate) mod tests {
         let session = Session::open(EmulatedDnie::new(&DNIE_3_ATR)).unwrap();
         assert_eq!(session.idesp, None);
     }
+
+    #[test]
+    fn reports_a_card_reset_mid_channel() {
+        let card = card_with_channel().resetting_mid_channel();
+        assert!(matches!(retries(card), Err(Error::CardReset)));
+    }
+
+    #[test]
+    fn reports_the_channel_lost_on_6688() {
+        let card = card_with_channel().losing_the_channel();
+        assert!(matches!(retries(card), Err(Error::ChannelLost)));
+    }
+
+    #[test]
+    fn reports_a_secure_channel_error_on_a_bad_response_mac() {
+        let card = card_with_channel().corrupting_a_response_mac();
+        assert!(matches!(retries(card), Err(Error::SecureChannel(_))));
+    }
+
+    #[test]
+    fn starts_a_fresh_channel_after_each_failure() {
+        let faulty = [
+            card_with_channel().resetting_mid_channel(),
+            card_with_channel().losing_the_channel(),
+            card_with_channel().corrupting_a_response_mac(),
+        ];
+        for card in faulty {
+            let mut session = Session::open(card.with_pin_retries(2)).unwrap();
+            assert!(session.pin_retries().is_err());
+            assert_eq!(session.pin_retries().unwrap(), 2);
+        }
+    }
 }
