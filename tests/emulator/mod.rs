@@ -63,6 +63,15 @@ pub struct EmulatedDnie {
     channel: Option<CardChannel>,
     retries: u8,
     retries_answer: Option<u16>,
+    fault: Option<Fault>,
+}
+
+/// One failure the card inflicts on the next protected command.
+#[derive(Clone, Copy)]
+enum Fault {
+    Reset,
+    ChannelLost,
+    BadResponseMac,
 }
 
 struct File {
@@ -91,6 +100,7 @@ impl EmulatedDnie {
             channel: None,
             retries: DEFAULT_RETRIES,
             retries_answer: None,
+            fault: None,
         }
     }
 
@@ -128,6 +138,24 @@ impl EmulatedDnie {
     /// Corrupts `Kicc` in the internal authentication answer after hashing it.
     pub fn tampering_internal_authentication(mut self) -> Self {
         self.chip_mut().tamper_internal_authentication = true;
+        self
+    }
+
+    /// Resets the card on the next protected command, which the transport reports.
+    pub fn resetting_mid_channel(mut self) -> Self {
+        self.fault = Some(Fault::Reset);
+        self
+    }
+
+    /// Answers `66 88` to the next protected command, as a card that dropped the channel.
+    pub fn losing_the_channel(mut self) -> Self {
+        self.fault = Some(Fault::ChannelLost);
+        self
+    }
+
+    /// Corrupts the MAC of the next protected response.
+    pub fn corrupting_a_response_mac(mut self) -> Self {
+        self.fault = Some(Fault::BadResponseMac);
         self
     }
 
@@ -334,7 +362,23 @@ impl Transport for EmulatedDnie {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         let protected = apdu.first().is_some_and(|cla| cla & PROTECTED == PROTECTED);
         if protected && self.channel.is_some() {
-            return Ok(self.answer_protected(apdu));
+            return match self.fault.take() {
+                Some(Fault::Reset) => {
+                    self.reset()?;
+                    Err(Error::CardReset)
+                }
+                Some(Fault::ChannelLost) => {
+                    self.channel = None;
+                    Ok(vec![0x66, 0x88])
+                }
+                Some(Fault::BadResponseMac) => {
+                    let mut response = self.answer_protected(apdu);
+                    let mac_end = response.len() - 3;
+                    response[mac_end] ^= 0xFF;
+                    Ok(response)
+                }
+                None => Ok(self.answer_protected(apdu)),
+            };
         }
         let Some(apdu) = parse(apdu) else {
             return Ok(vec![0x67, 0x00]);
