@@ -1,5 +1,7 @@
 // Derived from JMulticard (https://github.com/ctt-gob-es/jmulticard, commit 4ec9494):
 // - es.gob.jmulticard.card.dnie.DnieFactory (Tomás García-Merás)
+// - es.gob.jmulticard.card.dnie.Dnie (Tomás García-Merás)
+// - es.gob.jmulticard.card.dnie.Dnie3 (Tomás García-Merás)
 // rdnie takes the EUPL 1.1+ branch of the dual licence below.
 //
 // Controlador Java de la Secretaria de Estado de Administraciones Publicas
@@ -40,29 +42,82 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-//! Session with a DNIe 3.0/4.0, opened as `DnieFactory.getDnie` does: reset, then classify the ATR.
+//! Session with a DNIe 3.0/4.0, opened as `DnieFactory.getDnie` and `Dnie3` do: reset, classify
+//! the ATR, read the IDESP.
 
-use crate::{Error, Transport, atr::check_dnie_3};
+use crate::{
+    Certificate, Error, Transport,
+    atr::check_dnie_3,
+    certificates,
+    files::{self, Location},
+};
+
+const IDESP: &[u8] = &[0x3F, 0x00, 0x00, 0x06];
 
 /// Session with a DNIe 3.0/4.0 over any [`Transport`].
 pub struct Session<T: Transport> {
     transport: T,
+    /// Support number, which picks the channel key set; card data, so never logged.
+    #[allow(dead_code, reason = "the PIN channel reads it to pick its key set")]
+    idesp: Option<String>,
 }
 
 impl<T: Transport> Session<T> {
-    /// Resets the card and accepts it only if it is a DNIe 3.0/4.0.
+    /// Resets the card, accepts it only if it is a DNIe 3.0/4.0 and reads its IDESP if it can.
     ///
     /// # Errors
     ///
-    /// Those of [`Transport::reset`], [`Error::NotDnie`], [`Error::LegacyDnie`] and
-    /// [`Error::BurnedDnie`].
+    /// Those of [`Transport::transaction`], [`Transport::reset`], [`Error::NotDnie`],
+    /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`].
     pub fn open(mut transport: T) -> Result<Self, Error> {
-        check_dnie_3(&transport.reset()?)?;
-        Ok(Self { transport })
+        let idesp = transport.transaction(|card| {
+            check_dnie_3(&card.reset()?)?;
+            Ok(read_idesp(card))
+        })?;
+        Ok(Self { transport, idesp })
+    }
+
+    /// Lists the holder's certificates that have a private key, without a PIN.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Session::open`], [`Error::Status`] if a file cannot be read and
+    /// [`Error::MalformedPkcs15`].
+    pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
+        self.transport.transaction(|card| {
+            check_dnie_3(&card.reset()?)?;
+            certificates::load(card)
+        })
     }
 
     /// Ends the session and hands back the transport.
     pub fn into_transport(self) -> T {
         self.transport
+    }
+}
+
+/// The IDESP in clear, or `None` if the card does not give it, as `Dnie3` leaves it.
+fn read_idesp(card: &mut dyn Transport) -> Option<String> {
+    let location = Location::new(IDESP)?;
+    let idesp = files::read(card, &location).ok()?;
+    (!idesp.is_empty()).then(|| String::from_utf8_lossy(&idesp).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Session;
+    use crate::emulator::{DNIE_3_ATR, EmulatedDnie};
+
+    #[test]
+    fn keeps_the_idesp() {
+        let card = EmulatedDnie::new(&DNIE_3_ATR).with_idesp(b"TST000042");
+        let session = Session::open(card).unwrap();
+        assert_eq!(session.idesp.as_deref(), Some("TST000042"));
+    }
+
+    #[test]
+    fn opens_without_idesp() {
+        let session = Session::open(EmulatedDnie::new(&DNIE_3_ATR)).unwrap();
+        assert_eq!(session.idesp, None);
     }
 }

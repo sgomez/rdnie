@@ -1,1 +1,1 @@
-doc-valid-idents = ["DNIe", "WinSCard", ".."]
+doc-valid-idents = ["DNIe", "WinSCard", "PrKDF", "JMulticard", ".."]
