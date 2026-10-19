@@ -62,13 +62,14 @@
 
 use rand_core::{OsRng, RngCore};
 use rsa::{
-    BigUint, RsaPrivateKey, RsaPublicKey,
+    BigUint, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey,
     hazmat::{rsa_decrypt_and_check, rsa_encrypt},
     pkcs8::DecodePublicKey,
     traits::PublicKeyParts,
 };
 use sha1::{Digest, Sha1};
-use x509_cert::der::{Decode, Encode, SliceReader};
+use sha2::{Sha256, Sha384, Sha512};
+use x509_cert::der::{Decode, Encode, SliceReader, asn1::ObjectIdentifier};
 use zeroize::Zeroize;
 
 use crate::{
@@ -88,6 +89,28 @@ const FRAME_START: u8 = 0x6A;
 const FRAME_END: u8 = 0xBC;
 const MSE_SET: u8 = 0x22;
 
+const SHA1_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.5");
+const SHA256_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
+const SHA384_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.12");
+const SHA512_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.13");
+
+// DER DigestInfo headers of PKCS#1 v1.5 (RFC 8017, note 1 of section 9.2).
+const SHA1_DIGEST_INFO: &[u8] = &[
+    0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2B, 0x0E, 0x03, 0x02, 0x1A, 0x05, 0x00, 0x04, 0x14,
+];
+const SHA256_DIGEST_INFO: &[u8] = &[
+    0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+    0x00, 0x04, 0x20,
+];
+const SHA384_DIGEST_INFO: &[u8] = &[
+    0x30, 0x41, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05,
+    0x00, 0x04, 0x30,
+];
+const SHA512_DIGEST_INFO: &[u8] = &[
+    0x30, 0x51, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05,
+    0x00, 0x04, 0x40,
+];
+
 const INTERNAL_AUTHENTICATION_FAILED: Error =
     Error::SecureChannel("the card failed the internal authentication");
 const EXTERNAL_AUTHENTICATION_FAILED: Error =
@@ -95,9 +118,13 @@ const EXTERNAL_AUTHENTICATION_FAILED: Error =
 const RANDOM_FAILED: Error = Error::SecureChannel("the OS random generator failed");
 
 /// Authenticates card and terminal with `keys` and returns the channel they agree on.
-pub(crate) fn open(card: &mut dyn Transport, keys: &KeySet) -> Result<SecureMessaging, Error> {
+pub(crate) fn open(
+    card: &mut dyn Transport,
+    keys: &KeySet,
+    ca_key: &RsaPublicKey,
+) -> Result<SecureMessaging, Error> {
     let serial = padded_serial(card)?;
-    let icc_key = icc_public_key(card)?;
+    let icc_key = icc_public_key(card, ca_key)?;
     verify_ifd_certificate_chain(card, keys)?;
 
     let rnd_ifd: [u8; CHALLENGE_LENGTH] = random()?;
@@ -119,20 +146,54 @@ fn padded_serial(card: &mut dyn Transport) -> Result<Vec<u8>, Error> {
     Ok(padded)
 }
 
-/// The public key of the X.509 component certificate; any data after it is ignored.
-fn icc_public_key(card: &mut dyn Transport) -> Result<RsaPublicKey, Error> {
+/// The public key of the X.509 component certificate, once `ca_key` has signed it; any data
+/// after the certificate is ignored.
+fn icc_public_key(card: &mut dyn Transport, ca_key: &RsaPublicKey) -> Result<RsaPublicKey, Error> {
     const MALFORMED: Error = Error::SecureChannel("malformed component certificate");
     let location = Location::new(ICC_CERTIFICATE).ok_or(MALFORMED)?;
     let encoded = files::read(card, &location)?;
     let certificate = SliceReader::new(&encoded)
         .and_then(|mut reader| x509_cert::Certificate::decode(&mut reader))
         .map_err(|_| MALFORMED)?;
+    verify_signature(&certificate, ca_key)?;
     let spki = certificate
         .tbs_certificate
         .subject_public_key_info
         .to_der()
         .map_err(|_| MALFORMED)?;
     RsaPublicKey::from_public_key_der(&spki).map_err(|_| MALFORMED)
+}
+
+fn verify_signature(
+    certificate: &x509_cert::Certificate,
+    ca_key: &RsaPublicKey,
+) -> Result<(), Error> {
+    const UNTRUSTED: Error =
+        Error::SecureChannel("the component certificate is not signed by the CA");
+    let tbs = certificate
+        .tbs_certificate
+        .to_der()
+        .map_err(|_| UNTRUSTED)?;
+    let signature = certificate.signature.as_bytes().ok_or(UNTRUSTED)?;
+    let oid = certificate.signature_algorithm.oid;
+    let (prefix, hashed): (&[u8], Vec<u8>) = if oid == SHA1_WITH_RSA {
+        (SHA1_DIGEST_INFO, Sha1::digest(&tbs).to_vec())
+    } else if oid == SHA256_WITH_RSA {
+        (SHA256_DIGEST_INFO, Sha256::digest(&tbs).to_vec())
+    } else if oid == SHA384_WITH_RSA {
+        (SHA384_DIGEST_INFO, Sha384::digest(&tbs).to_vec())
+    } else if oid == SHA512_WITH_RSA {
+        (SHA512_DIGEST_INFO, Sha512::digest(&tbs).to_vec())
+    } else {
+        return Err(UNTRUSTED);
+    };
+    let scheme = Pkcs1v15Sign {
+        hash_len: Some(hashed.len()),
+        prefix: prefix.into(),
+    };
+    ca_key
+        .verify(scheme, &hashed, signature)
+        .map_err(|_| UNTRUSTED)
 }
 
 /// Lets the card verify the CA CVC against its root key, then the terminal CVC against the CA.
@@ -294,20 +355,23 @@ fn send(
 
 #[cfg(test)]
 mod tests {
-    use crate::{Error, Session, session::tests::card_with_channel};
+    use crate::{
+        Error,
+        session::tests::{card_with_channel, open},
+    };
 
     #[test]
     fn refuses_a_tampered_internal_authentication() {
         let card = card_with_channel().tampering_internal_authentication();
         assert!(matches!(
-            Session::open(card).unwrap().pin_retries(),
+            open(card).pin_retries(),
             Err(Error::SecureChannel(_))
         ));
     }
 
     #[test]
     fn draws_fresh_randomness_for_every_handshake() {
-        let mut session = Session::open(card_with_channel()).unwrap();
+        let mut session = open(card_with_channel());
         session.pin_retries().unwrap();
         session.pin_retries().unwrap();
         let card = session.into_transport();
@@ -316,5 +380,31 @@ mod tests {
         };
         assert_ne!(first.rnd_ifd, second.rnd_ifd);
         assert_ne!(first.kifd, second.kifd);
+    }
+
+    #[test]
+    fn refuses_a_component_certificate_the_ca_did_not_sign() {
+        let mut session = open(card_with_channel().with_untrusted_component_certificate());
+        assert!(matches!(
+            session.pin_retries(),
+            Err(Error::SecureChannel(_))
+        ));
+        assert_eq!(session.into_transport().internal_authentications(), 0);
+    }
+
+    #[test]
+    fn accepts_a_component_certificate_the_ca_signed() {
+        let mut session = open(card_with_channel());
+        assert!(session.pin_retries().is_ok());
+        assert_eq!(session.into_transport().internal_authentications(), 1);
+    }
+
+    #[test]
+    fn production_sessions_trust_only_the_embedded_ca() {
+        let mut session = crate::Session::open(card_with_channel()).unwrap();
+        assert!(matches!(
+            session.pin_retries(),
+            Err(Error::SecureChannel(_))
+        ));
     }
 }

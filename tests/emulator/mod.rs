@@ -1,6 +1,6 @@
 //! Emulated DNIe behind the `Transport` seam, generated at test time from no real card data.
 // Each test crate uses a different part of the emulator.
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 mod channel;
 mod chip;
@@ -13,7 +13,7 @@ use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 
 use channel::CardChannel;
 use chip::Chip;
-pub use chip::{Handshake, TerminalKey};
+pub use chip::{Handshake, TerminalKey, ca_public_key};
 pub use pkcs15::HolderCertificate;
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
@@ -74,6 +74,7 @@ pub struct EmulatedDnie {
     transactions: usize,
     commands: usize,
     pin_queries: Vec<PinQuery>,
+    fault: Option<Fault>,
 }
 
 /// A `VERIFY` the card received.
@@ -83,6 +84,14 @@ pub struct PinQuery {
     pub transaction: usize,
     /// Whether it carried a PIN rather than asking for the retries.
     pub with_pin: bool,
+}
+
+/// One failure the card inflicts on the next protected command.
+#[derive(Clone, Copy)]
+enum Fault {
+    Reset,
+    ChannelLost,
+    BadResponseMac,
 }
 
 struct File {
@@ -119,6 +128,7 @@ impl EmulatedDnie {
             transactions: 0,
             commands: 0,
             pin_queries: Vec::new(),
+            fault: None,
         }
     }
 
@@ -127,6 +137,18 @@ impl EmulatedDnie {
         let mut card = self.with_file(&[ICC_CERTIFICATE], chip::component_certificate());
         card.chip = Some(Chip::new(terminals));
         card
+    }
+
+    /// Stores a component certificate that the test CA did not sign.
+    pub fn with_untrusted_component_certificate(self) -> Self {
+        self.with_file(&[ICC_CERTIFICATE], chip::foreign_component_certificate())
+    }
+
+    /// How many INTERNAL AUTHENTICATE commands the card received.
+    pub fn internal_authentications(&self) -> usize {
+        self.chip
+            .as_ref()
+            .map_or(0, |chip| chip.internal_authentications)
     }
 
     /// PIN attempts left; 0 means blocked.
@@ -160,6 +182,24 @@ impl EmulatedDnie {
     /// APDUs the card received.
     pub fn commands(&self) -> usize {
         self.commands
+    }
+
+    /// Resets the card on the next protected command, which the transport reports.
+    pub fn resetting_mid_channel(mut self) -> Self {
+        self.fault = Some(Fault::Reset);
+        self
+    }
+
+    /// Answers `66 88` to the next protected command, as a card that dropped the channel.
+    pub fn losing_the_channel(mut self) -> Self {
+        self.fault = Some(Fault::ChannelLost);
+        self
+    }
+
+    /// Corrupts the MAC of the next protected response.
+    pub fn corrupting_a_response_mac(mut self) -> Self {
+        self.fault = Some(Fault::BadResponseMac);
+        self
     }
 
     /// The randomness of every handshake the card accepted.
@@ -428,7 +468,23 @@ impl Transport for EmulatedDnie {
         self.commands += 1;
         let protected = apdu.first().is_some_and(|cla| cla & PROTECTED == PROTECTED);
         if protected && self.channel.is_some() {
-            return Ok(self.answer_protected(apdu));
+            return match self.fault.take() {
+                Some(Fault::Reset) => {
+                    self.reset()?;
+                    Err(Error::CardReset)
+                }
+                Some(Fault::ChannelLost) => {
+                    self.channel = None;
+                    Ok(vec![0x66, 0x88])
+                }
+                Some(Fault::BadResponseMac) => {
+                    let mut response = self.answer_protected(apdu);
+                    let mac_end = response.len() - 3;
+                    response[mac_end] ^= 0xFF;
+                    Ok(response)
+                }
+                None => Ok(self.answer_protected(apdu)),
+            };
         }
         let Some(apdu) = parse(apdu) else {
             return Ok(vec![0x67, 0x00]);

@@ -45,11 +45,14 @@
 //! Session with a DNIe 3.0/4.0, opened as `DnieFactory.getDnie` and `Dnie3` do: reset, classify
 //! the ATR, read the IDESP.
 
+use rsa::RsaPublicKey;
+
 use crate::{
     Certificate, Error, HashAlgorithm, KeyReference, Pin, Transport,
     atr::check_dnie_3,
     certificates,
     files::{self, Location},
+    key_sets::ca_component_public_key,
     pin, signature,
 };
 
@@ -60,6 +63,7 @@ pub struct Session<T: Transport> {
     transport: T,
     /// Support number, which picks the channel key set; card data, so never logged.
     idesp: Option<String>,
+    ca_key: RsaPublicKey,
 }
 
 impl<T: Transport> Session<T> {
@@ -69,12 +73,25 @@ impl<T: Transport> Session<T> {
     ///
     /// Those of [`Transport::transaction`], [`Transport::reset`], [`Error::NotDnie`],
     /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`].
-    pub fn open(mut transport: T) -> Result<Self, Error> {
+    pub fn open(transport: T) -> Result<Self, Error> {
+        Self::open_trusting(transport, ca_component_public_key())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_with_ca_key(transport: T, ca_key: RsaPublicKey) -> Result<Self, Error> {
+        Self::open_trusting(transport, ca_key)
+    }
+
+    fn open_trusting(mut transport: T, ca_key: RsaPublicKey) -> Result<Self, Error> {
         let idesp = transport.transaction(|card| {
             check_dnie_3(&card.reset()?)?;
             Ok(read_idesp(card))
         })?;
-        Ok(Self { transport, idesp })
+        Ok(Self {
+            transport,
+            idesp,
+            ca_key,
+        })
     }
 
     /// Lists the holder's certificates that have a private key, without a PIN.
@@ -95,7 +112,10 @@ impl<T: Transport> Session<T> {
     /// authentication fails and [`Error::Status`] if the card gives no retry count.
     pub fn pin_retries(&mut self) -> Result<u8, Error> {
         let idesp = self.idesp.as_deref();
-        operation(&mut self.transport, |card| pin::retries_left(card, idesp))
+        let ca_key = &self.ca_key;
+        operation(&mut self.transport, |card| {
+            pin::retries_left(card, idesp, ca_key)
+        })
     }
 
     /// Signs a SHA-256/384/512 digest with `key` after verifying `pin`, and returns the PKCS#1
@@ -115,8 +135,9 @@ impl<T: Transport> Session<T> {
         let digest_info = signature::digest_info(algorithm, digest)?;
         self.pin_retries()?;
         let idesp = self.idesp.as_deref();
+        let ca_key = &self.ca_key;
         operation(&mut self.transport, |card| {
-            let mut channel = pin::verify(card, idesp, pin)?;
+            let mut channel = pin::verify(card, idesp, ca_key, pin)?;
             signature::sign(&mut channel, card, key, digest_info)
         })
     }
@@ -162,7 +183,9 @@ pub(crate) mod tests {
 
     use crate::{
         Error, HashAlgorithm, Pin, StatusWord,
-        emulator::{DEFAULT_PIN, DNIE_3_ATR, EmulatedDnie, HolderCertificate, TerminalKey},
+        emulator::{
+            DEFAULT_PIN, DNIE_3_ATR, EmulatedDnie, HolderCertificate, TerminalKey, ca_public_key,
+        },
         key_sets::{KeySet, R1_PIN, R1_USER, R2_PIN, R2_USER},
     };
 
@@ -184,8 +207,12 @@ pub(crate) mod tests {
         card_accepting(&[&R1_PIN, &R1_USER, &R2_PIN, &R2_USER])
     }
 
+    pub(crate) fn open(card: EmulatedDnie) -> Session<EmulatedDnie> {
+        Session::open_with_ca_key(card, ca_public_key()).unwrap()
+    }
+
     fn retries(card: EmulatedDnie) -> Result<u8, Error> {
-        Session::open(card).unwrap().pin_retries()
+        open(card).pin_retries()
     }
 
     #[test]
@@ -274,7 +301,7 @@ pub(crate) mod tests {
                 Sha512::digest(data).to_vec(),
             ),
         ];
-        let mut session = Session::open(signing_card()).unwrap();
+        let mut session = open(signing_card());
         let certificate = session.certificates().unwrap().remove(0).der;
         for (algorithm, scheme, digest) in cases {
             let signature = sign_with(&mut session, &digest, algorithm).unwrap();
@@ -284,7 +311,7 @@ pub(crate) mod tests {
 
     #[test]
     fn rejects_a_digest_of_another_length_before_any_apdu() {
-        let mut session = Session::open(signing_card()).unwrap();
+        let mut session = open(signing_card());
         let key = session.certificates().unwrap().remove(0).key;
         let sent = session.transport.commands();
         let result = session.sign(
@@ -305,7 +332,7 @@ pub(crate) mod tests {
 
     #[test]
     fn verifies_the_pin_in_a_fresh_transaction_after_reading_the_retries() {
-        let mut session = Session::open(signing_card()).unwrap();
+        let mut session = open(signing_card());
         sign_with(&mut session, &[0; 32], HashAlgorithm::Sha256).unwrap();
         let queries = session.transport.pin_queries();
         let read = queries.iter().find(|query| !query.with_pin).unwrap();
@@ -315,14 +342,14 @@ pub(crate) mod tests {
 
     #[test]
     fn drops_the_verified_pin_after_signing() {
-        let mut session = Session::open(signing_card()).unwrap();
+        let mut session = open(signing_card());
         sign_with(&mut session, &[0; 32], HashAlgorithm::Sha256).unwrap();
         assert!(!session.transport.pin_verified());
     }
 
     #[test]
     fn drops_the_verified_pin_when_signing_fails() {
-        let mut session = Session::open(signing_card()).unwrap();
+        let mut session = open(signing_card());
         let mut key = session.certificates().unwrap().remove(0).key;
         key.file = [0x01, 0x99];
         let result = session.sign(
@@ -346,5 +373,37 @@ pub(crate) mod tests {
     fn opens_without_idesp() {
         let session = Session::open(EmulatedDnie::new(&DNIE_3_ATR)).unwrap();
         assert_eq!(session.idesp, None);
+    }
+
+    #[test]
+    fn reports_a_card_reset_mid_channel() {
+        let card = card_with_channel().resetting_mid_channel();
+        assert!(matches!(retries(card), Err(Error::CardReset)));
+    }
+
+    #[test]
+    fn reports_the_channel_lost_on_6688() {
+        let card = card_with_channel().losing_the_channel();
+        assert!(matches!(retries(card), Err(Error::ChannelLost)));
+    }
+
+    #[test]
+    fn reports_a_secure_channel_error_on_a_bad_response_mac() {
+        let card = card_with_channel().corrupting_a_response_mac();
+        assert!(matches!(retries(card), Err(Error::SecureChannel(_))));
+    }
+
+    #[test]
+    fn starts_a_fresh_channel_after_each_failure() {
+        let faulty = [
+            card_with_channel().resetting_mid_channel(),
+            card_with_channel().losing_the_channel(),
+            card_with_channel().corrupting_a_response_mac(),
+        ];
+        for card in faulty {
+            let mut session = open(card.with_pin_retries(2));
+            assert!(session.pin_retries().is_err());
+            assert_eq!(session.pin_retries().unwrap(), 2);
+        }
     }
 }

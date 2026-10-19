@@ -46,6 +46,7 @@
 //! The PIN channel, the retry counter and `VERIFY` sent through it, and the switch to the user
 //! channel, as `Dnie` and `Dnie3` run them.
 
+use rsa::RsaPublicKey;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
@@ -72,8 +73,12 @@ const RETRIES_TAG: u8 = 0xC0;
 const BLOCKED: StatusWord = StatusWord(0x6983);
 
 /// Opens the PIN channel and reads how many PIN attempts are left, without sending a PIN.
-pub(crate) fn retries_left(card: &mut dyn Transport, idesp: Option<&str>) -> Result<u8, Error> {
-    let mut channel = open_pin_channel(card, idesp)?;
+pub(crate) fn retries_left(
+    card: &mut dyn Transport,
+    idesp: Option<&str>,
+    ca_key: &RsaPublicKey,
+) -> Result<u8, Error> {
+    let mut channel = open_pin_channel(card, idesp, ca_key)?;
     query_retries(&mut channel, card)
 }
 
@@ -81,9 +86,10 @@ pub(crate) fn retries_left(card: &mut dyn Transport, idesp: Option<&str>) -> Res
 pub(crate) fn verify(
     card: &mut dyn Transport,
     idesp: Option<&str>,
+    ca_key: &RsaPublicKey,
     pin: Pin,
 ) -> Result<SecureMessaging, Error> {
-    let mut channel = open_pin_channel(card, idesp)?;
+    let mut channel = open_pin_channel(card, idesp, ca_key)?;
     query_retries(&mut channel, card)?;
     let mut command = Command {
         cla: 0x00,
@@ -97,7 +103,7 @@ pub(crate) fn verify(
     let response = channel.transmit(card, &command);
     command.data.zeroize();
     response?.into_success()?;
-    open_user_channel(&mut channel, card, idesp)
+    open_user_channel(&mut channel, card, idesp, ca_key)
 }
 
 fn query_retries(channel: &mut SecureMessaging, card: &mut dyn Transport) -> Result<u8, Error> {
@@ -123,12 +129,13 @@ fn query_retries(channel: &mut SecureMessaging, card: &mut dyn Transport) -> Res
 fn open_pin_channel(
     card: &mut dyn Transport,
     idesp: Option<&str>,
+    ca_key: &RsaPublicKey,
 ) -> Result<SecureMessaging, Error> {
     match files::select_master_file(card) {
         Ok(()) | Err(Error::Status(_)) => {}
         Err(error) => return Err(error),
     }
-    cwa14890::open(card, KeySet::for_card(idesp, Channel::Pin))
+    cwa14890::open(card, KeySet::for_card(idesp, Channel::Pin), ca_key)
 }
 
 /// Selects the master file through the PIN channel, as `Dnie3.openUserChannel` does, then
@@ -137,9 +144,10 @@ fn open_user_channel(
     pin_channel: &mut SecureMessaging,
     card: &mut dyn Transport,
     idesp: Option<&str>,
+    ca_key: &RsaPublicKey,
 ) -> Result<SecureMessaging, Error> {
     pin_channel
         .transmit(card, &files::master_file_selection())?
         .into_success()?;
-    cwa14890::open(card, KeySet::for_card(idesp, Channel::User))
+    cwa14890::open(card, KeySet::for_card(idesp, Channel::User), ca_key)
 }
