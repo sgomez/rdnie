@@ -246,7 +246,7 @@ pub(crate) mod tests {
             card_with_channel().corrupting_a_response_mac(),
         ];
         for card in faulty {
-            let mut session = Session::open(card.with_pin_retries(2)).unwrap();
+            let mut session = open(card.with_pin_retries(2));
             assert!(session.pin_retries().is_err());
             assert_eq!(session.pin_retries().unwrap(), 2);
         }
