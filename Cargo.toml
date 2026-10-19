@@ -1,0 +1,30 @@
+[package]
+name = "rdnie"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "EUPL-1.2"
+description = "Spanish electronic ID card (DNIe) driver over PC/SC: CWA-14890 secure channel, certificates, PIN retry counter and signing"
+repository = "https://github.com/sgomez/rdnie"
+readme = "README.md"
+keywords = ["dnie", "smartcard", "pcsc", "apdu", "signature"]
+categories = ["cryptography", "hardware-support"]
+
+[features]
+default = ["pcsc"]
+pcsc = ["dep:pcsc"]
+
+[[example]]
+name = "detect"
+required-features = ["pcsc"]
+
+[dependencies]
+pcsc = { version = "2.9", optional = true }
+thiserror = "2"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
