@@ -39,6 +39,14 @@ pub enum Error {
     /// The PIN is blocked: no attempt is left.
     #[error("the PIN is blocked")]
     PinBlocked,
+    /// The digest is not as long as its hash algorithm makes them.
+    #[error("digest of {actual} bytes where its algorithm gives {expected}")]
+    DigestLength {
+        /// Length the algorithm produces.
+        expected: usize,
+        /// Length received.
+        actual: usize,
+    },
     /// The card was reset, so any state built on it is lost.
     #[error("the card was reset")]
     CardReset,

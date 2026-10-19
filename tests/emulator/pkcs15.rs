@@ -1,8 +1,23 @@
 //! Holder certificates and the PKCS#15 CDF and PrKDF that describe them, built at test time.
 
-use std::io::Write;
+use std::{io::Write, str::FromStr, sync::LazyLock, time::Duration};
 
 use flate2::{Compression, write::ZlibEncoder};
+use rsa::{
+    RsaPrivateKey,
+    pkcs1v15::{Signature, SigningKey},
+    pkcs8::EncodePublicKey,
+    rand_core::OsRng,
+    sha2::Sha256,
+};
+use x509_cert::{
+    builder::{Builder, CertificateBuilder, Profile},
+    der::{Decode, Encode},
+    name::Name,
+    serial_number::SerialNumber,
+    spki::SubjectPublicKeyInfoOwned,
+    time::Validity,
+};
 
 pub const CDF: [[u8; 2]; 2] = [[0x50, 0x15], [0x60, 0x04]];
 pub const PRKDF: [[u8; 2]; 2] = [[0x50, 0x15], [0x60, 0x01]];
@@ -12,6 +27,10 @@ const SEQUENCE: u8 = 0x30;
 const OCTET_STRING: u8 = 0x04;
 // Cards pad their files up to the size they were created with.
 const PADDING: usize = 16;
+const HOLDER_KEY_BITS: usize = 2048;
+
+static HOLDER_KEY: LazyLock<RsaPrivateKey> =
+    LazyLock::new(|| RsaPrivateKey::new(&mut OsRng, HOLDER_KEY_BITS).unwrap());
 
 /// A certificate on the card, with fake DER content of the given length.
 #[derive(Clone)]
@@ -19,6 +38,8 @@ pub struct HolderCertificate {
     pub der: Vec<u8>,
     pub file: [u8; 2],
     pub key_file: Option<[u8; 2]>,
+    /// Private key the card signs with, for certificates of a real key pair.
+    pub key: Option<RsaPrivateKey>,
     id: u8,
     compressed: bool,
 }
@@ -29,8 +50,35 @@ impl HolderCertificate {
             der: fake_der(id, length),
             file: [0x70, id],
             key_file: Some([0x01, id]),
+            key: None,
             id,
             compressed: false,
+        }
+    }
+
+    /// A self-signed X.509 certificate of a holder key pair the card can sign with.
+    pub fn signing(id: u8) -> Self {
+        let key = HOLDER_KEY.clone();
+        let spki = SubjectPublicKeyInfoOwned::from_der(
+            key.to_public_key().to_public_key_der().unwrap().as_bytes(),
+        )
+        .unwrap();
+        let signer = SigningKey::<Sha256>::new(key.clone());
+        let certificate = CertificateBuilder::new(
+            Profile::Root,
+            SerialNumber::from(u32::from(id)),
+            Validity::from_now(Duration::from_secs(3600)).unwrap(),
+            Name::from_str("CN=Test holder").unwrap(),
+            spki,
+            &signer,
+        )
+        .unwrap()
+        .build::<Signature>()
+        .unwrap();
+        Self {
+            der: certificate.to_der().unwrap(),
+            key: Some(key),
+            ..Self::new(id, 120)
         }
     }
 

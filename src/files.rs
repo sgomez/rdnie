@@ -94,16 +94,25 @@ pub(crate) fn select_master_file(card: &mut dyn Transport) -> Result<(), Error> 
     select(card, 0x04, MASTER_FILE_NAME).map(drop)
 }
 
-/// Selects a file and returns the length its FCI announces.
-fn select(card: &mut dyn Transport, p1: u8, file: &[u8]) -> Result<usize, Error> {
-    let response = card.transmit(&Command {
+/// `SELECT` of the master file by name.
+pub(crate) fn master_file_selection() -> Command {
+    selection(0x04, MASTER_FILE_NAME)
+}
+
+fn selection(p1: u8, file: &[u8]) -> Command {
+    Command {
         cla: 0x00,
         ins: SELECT,
         p1,
         p2: 0x00,
         data: file.to_vec(),
         le: None,
-    })?;
+    }
+}
+
+/// Selects a file and returns the length its FCI announces.
+fn select(card: &mut dyn Transport, p1: u8, file: &[u8]) -> Result<usize, Error> {
+    let response = card.transmit(&selection(p1, file))?;
     let fci = response.into_success()?;
     if fci.is_empty() {
         return Ok(0);

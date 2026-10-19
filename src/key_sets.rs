@@ -109,10 +109,6 @@ impl KeyGeneration {
 #[derive(Clone, Copy)]
 pub(crate) enum Channel {
     Pin,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the signing flow opens the user channel")
-    )]
     User,
 }
 

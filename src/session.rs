@@ -48,12 +48,12 @@
 use rsa::RsaPublicKey;
 
 use crate::{
-    Certificate, Error, Transport,
+    Certificate, Error, HashAlgorithm, KeyReference, Pin, Transport,
     atr::check_dnie_3,
     certificates,
     files::{self, Location},
     key_sets::{KeyGeneration, ca_component_public_key},
-    pin,
+    pin, signature,
 };
 
 const IDESP: &[u8] = &[0x3F, 0x00, 0x00, 0x06];
@@ -101,10 +101,7 @@ impl<T: Transport> Session<T> {
     /// Those of [`Session::open`], [`Error::Status`] if a file cannot be read and
     /// [`Error::MalformedPkcs15`].
     pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
-        self.transport.transaction(|card| {
-            check_dnie_3(&card.reset()?)?;
-            certificates::load(card)
-        })
+        operation(&mut self.transport, certificates::load)
     }
 
     /// Reads how many PIN attempts are left through the PIN channel, without sending a PIN.
@@ -116,9 +113,32 @@ impl<T: Transport> Session<T> {
     pub fn pin_retries(&mut self) -> Result<u8, Error> {
         let idesp = self.idesp.as_deref();
         let ca_key = &self.ca_key;
-        self.transport.transaction(|card| {
-            check_dnie_3(&card.reset()?)?;
+        operation(&mut self.transport, |card| {
             pin::retries_left(card, idesp, ca_key)
+        })
+    }
+
+    /// Signs a SHA-256/384/512 digest with `key` after verifying `pin`, and returns the PKCS#1
+    /// v1.5 signature.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::DigestLength`] before touching the card, those of [`Session::pin_retries`] and
+    /// [`Error::Status`] if the card refuses the PIN or the signature.
+    pub fn sign(
+        &mut self,
+        digest: &[u8],
+        algorithm: HashAlgorithm,
+        key: &KeyReference,
+        pin: Pin,
+    ) -> Result<Vec<u8>, Error> {
+        let digest_info = signature::digest_info(algorithm, digest)?;
+        self.pin_retries()?;
+        let idesp = self.idesp.as_deref();
+        let ca_key = &self.ca_key;
+        operation(&mut self.transport, |card| {
+            let mut channel = pin::verify(card, idesp, ca_key, pin)?;
+            signature::sign(&mut channel, card, key, digest_info)
         })
     }
 
@@ -134,6 +154,22 @@ impl<T: Transport> Session<T> {
     }
 }
 
+/// Runs `body` in one transaction between a reset that checks the card and a reset that drops
+/// any state it built, the verified PIN included.
+fn operation<R>(
+    transport: &mut impl Transport,
+    body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+) -> Result<R, Error> {
+    transport.transaction(|card| {
+        check_dnie_3(&card.reset()?)?;
+        let result = body(card);
+        let reset = card.reset();
+        let value = result?;
+        reset?;
+        Ok(value)
+    })
+}
+
 /// The IDESP in clear, or `None` if the card does not give it, as `Dnie3` leaves it.
 fn read_idesp(card: &mut dyn Transport) -> Option<String> {
     let location = Location::new(IDESP)?;
@@ -144,9 +180,18 @@ fn read_idesp(card: &mut dyn Transport) -> Option<String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::Session;
+    use rsa::{
+        Pkcs1v15Sign, RsaPublicKey,
+        pkcs8::DecodePublicKey,
+        sha2::{Digest, Sha256, Sha384, Sha512},
+    };
+    use x509_cert::der::{Decode, Encode};
+
     use crate::{
-        Error, KeyGeneration, StatusWord,
-        emulator::{DNIE_3_ATR, EmulatedDnie, TerminalKey, ca_public_key},
+        Error, HashAlgorithm, KeyGeneration, Pin, StatusWord,
+        emulator::{
+            DEFAULT_PIN, DNIE_3_ATR, EmulatedDnie, HolderCertificate, TerminalKey, ca_public_key,
+        },
         key_sets::{KeySet, R1_PIN, R1_USER, R2_PIN, R2_USER},
     };
 
@@ -156,6 +201,9 @@ pub(crate) mod tests {
             .map(|keys| TerminalKey {
                 chr: keys.terminal_chr,
                 modulus: keys.modulus.to_vec(),
+                user: [&R1_USER, &R2_USER]
+                    .iter()
+                    .any(|user| std::ptr::eq(*user, *keys)),
             })
             .collect();
         EmulatedDnie::new(&DNIE_3_ATR).with_secure_channel(&terminals)
@@ -211,6 +259,113 @@ pub(crate) mod tests {
     #[test]
     fn takes_second_generation_keys_without_idesp() {
         assert!(retries(card_accepting(&[&R2_PIN])).is_ok());
+    }
+
+    fn signing_card() -> EmulatedDnie {
+        card_with_channel().with_certificates(&[HolderCertificate::signing(1)])
+    }
+
+    fn sign_with(
+        session: &mut Session<EmulatedDnie>,
+        digest: &[u8],
+        algorithm: HashAlgorithm,
+    ) -> Result<Vec<u8>, Error> {
+        let key = session.certificates().unwrap().remove(0).key;
+        session.sign(digest, algorithm, &key, Pin::new(DEFAULT_PIN.to_owned()))
+    }
+
+    fn verify(certificate: &[u8], scheme: Pkcs1v15Sign, digest: &[u8], signature: &[u8]) {
+        let certificate = x509_cert::Certificate::from_der(certificate).unwrap();
+        let spki = certificate
+            .tbs_certificate
+            .subject_public_key_info
+            .to_der()
+            .unwrap();
+        RsaPublicKey::from_public_key_der(&spki)
+            .unwrap()
+            .verify(scheme, digest, signature)
+            .expect("the signature verifies with the certificate's public key");
+    }
+
+    #[test]
+    fn signs_digests_that_verify_with_the_certificate() {
+        let data = b"document";
+        let cases = [
+            (
+                HashAlgorithm::Sha256,
+                Pkcs1v15Sign::new::<Sha256>(),
+                Sha256::digest(data).to_vec(),
+            ),
+            (
+                HashAlgorithm::Sha384,
+                Pkcs1v15Sign::new::<Sha384>(),
+                Sha384::digest(data).to_vec(),
+            ),
+            (
+                HashAlgorithm::Sha512,
+                Pkcs1v15Sign::new::<Sha512>(),
+                Sha512::digest(data).to_vec(),
+            ),
+        ];
+        let mut session = open(signing_card());
+        let certificate = session.certificates().unwrap().remove(0).der;
+        for (algorithm, scheme, digest) in cases {
+            let signature = sign_with(&mut session, &digest, algorithm).unwrap();
+            verify(&certificate, scheme, &digest, &signature);
+        }
+    }
+
+    #[test]
+    fn rejects_a_digest_of_another_length_before_any_apdu() {
+        let mut session = open(signing_card());
+        let key = session.certificates().unwrap().remove(0).key;
+        let sent = session.transport.commands();
+        let result = session.sign(
+            &[0; 48],
+            HashAlgorithm::Sha256,
+            &key,
+            Pin::new(DEFAULT_PIN.to_owned()),
+        );
+        assert!(matches!(
+            result,
+            Err(Error::DigestLength {
+                expected: 32,
+                actual: 48
+            })
+        ));
+        assert_eq!(session.transport.commands(), sent);
+    }
+
+    #[test]
+    fn verifies_the_pin_in_a_fresh_transaction_after_reading_the_retries() {
+        let mut session = open(signing_card());
+        sign_with(&mut session, &[0; 32], HashAlgorithm::Sha256).unwrap();
+        let queries = session.transport.pin_queries();
+        let read = queries.iter().find(|query| !query.with_pin).unwrap();
+        let verified = queries.iter().find(|query| query.with_pin).unwrap();
+        assert!(read.transaction < verified.transaction);
+    }
+
+    #[test]
+    fn drops_the_verified_pin_after_signing() {
+        let mut session = open(signing_card());
+        sign_with(&mut session, &[0; 32], HashAlgorithm::Sha256).unwrap();
+        assert!(!session.transport.pin_verified());
+    }
+
+    #[test]
+    fn drops_the_verified_pin_when_signing_fails() {
+        let mut session = open(signing_card());
+        let mut key = session.certificates().unwrap().remove(0).key;
+        key.file = [0x01, 0x99];
+        let result = session.sign(
+            &[0; 32],
+            HashAlgorithm::Sha256,
+            &key,
+            Pin::new(DEFAULT_PIN.to_owned()),
+        );
+        assert!(matches!(result, Err(Error::Status(StatusWord(0x6A88)))));
+        assert!(!session.transport.pin_verified());
     }
 
     #[test]
