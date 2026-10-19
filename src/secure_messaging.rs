@@ -1,10 +1,13 @@
 //! CWA-14890 secure messaging of DNIe 3.0/4.0: session keys, command protection and response unprotection.
 
 // Derived from JMulticard (https://github.com/ctt-gob-es/jmulticard, commit 4ec9494):
-// es.gob.jmulticard.connection.AbstractApduEncrypter, ApduEncrypterDes, ApduEncrypterDesMac8
-// (Tomás García-Merás, Carlos Gamuci Millán), connection.cwa14890.Cwa14890CipheredApdu
-// (Carlos Gamuci, Alberto Martínez, Tomás García-Merás) and connection.cwa14890.Cwa14890OneV1Connection
-// (Carlos Gamuci, Tomás García-Merás). Original header:
+// - es.gob.jmulticard.connection.AbstractApduEncrypter (Tomás García-Merás)
+// - es.gob.jmulticard.connection.ApduEncrypterDes (Tomás García-Merás, Carlos Gamuci Millán)
+// - es.gob.jmulticard.connection.ApduEncrypterDesMac8 (Tomás García-Merás Capote)
+// - es.gob.jmulticard.connection.cwa14890.Cwa14890CipheredApdu (Carlos Gamuci, Alberto Martínez,
+//   Tomás García-Merás)
+// - es.gob.jmulticard.connection.cwa14890.Cwa14890OneV1Connection (Carlos Gamuci, Tomás García-Merás)
+// rdnie takes the EUPL 1.1+ branch of the dual licence below.
 //
 // Controlador Java de la Secretaria de Estado de Administraciones Publicas
 // para el DNI electronico.
@@ -53,7 +56,10 @@ use retail_mac::{KeyInit, Mac, RetailMac};
 use sha1::{Digest, Sha1};
 use zeroize::Zeroize;
 
-use crate::{Command, Error, Response, StatusWord, Transport};
+use crate::{
+    Command, Error, Response, StatusWord, Transport,
+    transport::{WRONG_LENGTH, short_le},
+};
 
 const BLOCK: usize = 8;
 const PROTECTED_CLA: u8 = 0x0C;
@@ -63,7 +69,6 @@ const TAG_LE: u8 = 0x97;
 const TAG_STATUS: u8 = 0x99;
 const TAG_MAC: u8 = 0x8E;
 const CHANNEL_LOST: StatusWord = StatusWord(0x6688);
-const WRONG_LE: u8 = 0x6C;
 
 /// Session state of an open secure channel.
 pub(crate) struct SecureMessaging {
@@ -135,10 +140,10 @@ impl SecureMessaging {
         let protected = self.protect(command)?;
         let response = self.unprotect(&transport.transmit(&protected)?)?;
         match response.status.0.to_be_bytes() {
-            [WRONG_LE, le] => self.transmit(
+            [WRONG_LENGTH, le] => self.transmit(
                 transport,
                 &Command {
-                    le: Some(le.into()),
+                    le: Some(short_le(le)),
                     ..command.clone()
                 },
             ),
@@ -526,6 +531,17 @@ mod tests {
         fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
             self.sent.push(apdu.to_vec());
             Ok(self.responses.remove(0))
+        }
+
+        fn reset(&mut self) -> Result<Vec<u8>, Error> {
+            unreachable!("the codec never resets the card")
+        }
+
+        fn transaction<R>(
+            &mut self,
+            body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+        ) -> Result<R, Error> {
+            body(self)
         }
     }
 

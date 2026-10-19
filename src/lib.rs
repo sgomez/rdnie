@@ -10,6 +10,7 @@ mod pcsc_transport;
     expect(dead_code, reason = "the CWA-14890 channel is its caller")
 )]
 mod secure_messaging;
+mod session;
 mod transport;
 
 pub use apdu::{Command, Response, StatusWord};
@@ -17,4 +18,5 @@ pub use atr::is_dnie;
 pub use error::Error;
 #[cfg(feature = "pcsc")]
 pub use pcsc_transport::PcscTransport;
+pub use session::Session;
 pub use transport::Transport;
