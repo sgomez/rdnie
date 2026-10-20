@@ -16,6 +16,17 @@ The `pcsc` feature, on by default, provides `PcscTransport`. Without it the crat
 
 On Linux, `pcscd` is needed at runtime and `libpcsclite-dev` to build.
 
+## Fuzzing
+
+The parsers of card data have `cargo-fuzz` targets in `fuzz/`, on Linux and macOS only. They need nightly and `cargo install cargo-fuzz`.
+
+```sh
+just fuzz-seed             # seed corpora from the emulator, into fuzz/corpus/
+just fuzz <target> [secs]  # one target, 60 seconds by default
+```
+
+The targets are the `[[bin]]` entries of `fuzz/Cargo.toml`.
+
 ## License
 
 EUPL-1.2.

@@ -15,7 +15,7 @@ use channel::CardChannel;
 pub use channel::ResponseShape;
 use chip::Chip;
 pub use chip::{Handshake, TerminalKey, component_root_public_key, foreign_root_public_key};
-pub use pkcs15::HolderCertificate;
+pub use pkcs15::{HolderCertificate, cdf, prkdf};
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
 pub const DNIE_3_ATR: [u8; 20] = [

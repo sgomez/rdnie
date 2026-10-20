@@ -115,14 +115,18 @@ fn selection(p1: u8, file: &[u8]) -> Command {
 /// Selects a file and returns the length its FCI announces.
 fn select(card: &mut dyn Transport, p1: u8, file: &[u8]) -> Result<usize, Error> {
     let response = card.transmit(&selection(p1, file))?;
-    let fci = response.into_success()?;
+    fci_length(&response.into_success()?)
+}
+
+/// The file length an FCI announces; 0 if the card sent none.
+pub(crate) fn fci_length(fci: &[u8]) -> Result<usize, Error> {
     if fci.is_empty() {
         return Ok(0);
     }
     if fci[0] != FCI || fci.len() <= 2 {
         return Err(Error::Status(StatusWord::SUCCESS));
     }
-    Ok(file_length(&fci))
+    Ok(file_length(fci))
 }
 
 /// The file length in an FCI, from tag `81` or the proprietary tag `85`; 0 if absent.

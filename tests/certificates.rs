@@ -131,6 +131,24 @@ fn rejects_a_compressed_certificate_that_is_not_x509() {
     assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
 }
 
+#[test]
+fn rejects_a_compressed_certificate_that_inflates_past_the_cap() {
+    let bomb = HolderCertificate::new(1, 20 * 1024).compressed();
+    let stored = bomb.stored();
+    assert!(stored.len() < 1024, "bomb stored in {} bytes", stored.len());
+    // Inflated whole, the bomb is a valid certificate: only the cap can refuse it.
+    assert!(<x509_cert::Certificate as x509_cert::der::Decode>::from_der(&bomb.der).is_ok());
+    assert!(matches!(load_error(&[bomb]), Error::MalformedPkcs15));
+}
+
+#[test]
+fn loads_a_compressed_certificate_just_under_the_cap() {
+    let certificates = [HolderCertificate::new(1, 8500).compressed()];
+    assert!((15 * 1024..=16 * 1024).contains(&certificates[0].der.len()));
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
+    assert_lists(card, &ders(&certificates));
+}
+
 fn labels(certificates: &[HolderCertificate]) -> Vec<String> {
     let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(certificates);
     let listed = Session::open(card).unwrap().certificates().unwrap();
