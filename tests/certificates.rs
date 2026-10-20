@@ -3,7 +3,7 @@
 mod emulator;
 
 use emulator::{DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate};
-use rdnie::Session;
+use rdnie::{Error, Session};
 
 fn assert_lists(card: EmulatedDnie, expected: &[Vec<u8>]) {
     let listed: Vec<Vec<u8>> = Session::open(card)
@@ -32,6 +32,13 @@ fn lists_certificates_as_der() {
         HolderCertificate::new(1, 120),
         HolderCertificate::new(2, 150),
     ];
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
+    assert_lists(card, &ders(&certificates));
+}
+
+#[test]
+fn ignores_bytes_after_an_uncompressed_certificate() {
+    let certificates = [HolderCertificate::new(1, 120).followed_by(32)];
     let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
     assert_lists(card, &ders(&certificates));
 }
@@ -93,4 +100,42 @@ fn reports_missing_cdf_with_its_status_word() {
     let card = EmulatedDnie::new(&DNIE_3_ATR);
     let error = Session::open(card).unwrap().certificates().unwrap_err();
     assert_eq!(error.to_string(), "card answered 6A 82");
+}
+
+fn load_error(certificates: &[HolderCertificate]) -> Error {
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(certificates);
+    Session::open(card).unwrap().certificates().unwrap_err()
+}
+
+#[test]
+fn rejects_a_certificate_with_an_empty_path() {
+    let certificate = HolderCertificate::new(1, 120).listed_at(&[]);
+    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+}
+
+#[test]
+fn rejects_a_certificate_whose_path_is_only_the_master_file() {
+    let certificate = HolderCertificate::new(1, 120).listed_at(&[0x3F, 0x00]);
+    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+}
+
+#[test]
+fn rejects_a_certificate_that_is_not_x509() {
+    let certificate = HolderCertificate::not_x509(1, 120);
+    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+}
+
+#[test]
+fn rejects_a_compressed_certificate_that_is_not_x509() {
+    let certificate = HolderCertificate::not_x509(1, 300).compressed();
+    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+}
+
+#[test]
+fn one_bad_certificate_fails_the_whole_load() {
+    let certificates = [
+        HolderCertificate::new(1, 120),
+        HolderCertificate::not_x509(2, 120),
+    ];
+    assert!(matches!(load_error(&certificates), Error::MalformedPkcs15));
 }

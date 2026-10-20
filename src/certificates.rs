@@ -46,6 +46,7 @@
 
 use std::fmt;
 
+use der::{Decode, Reader, SliceReader};
 use flate2::{Decompress, FlushDecompress, Status};
 
 use crate::{
@@ -92,7 +93,8 @@ pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Certificate>, Error> 
     let listed = pkcs15::entries(&files::read(card, &location(CDF)?)?)?;
     let mut ders = Vec::with_capacity(listed.len());
     for entry in &listed {
-        ders.push(decompressed(files::read(card, &location(&entry.path)?)?));
+        let stored = decompressed(files::read(card, &location(&entry.path)?)?);
+        ders.push(x509(&stored).ok_or(Error::MalformedPkcs15)?);
     }
     let keys = pkcs15::entries(&files::read(card, &location(PRKDF)?)?)?;
     let mut certificates = Vec::new();
@@ -113,6 +115,13 @@ pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Certificate>, Error> 
 
 fn location(path: &[u8]) -> Result<Location, Error> {
     Location::new(path).ok_or(Error::MalformedPkcs15)
+}
+
+/// The X.509 certificate at the start of `stored`, without the bytes after it.
+fn x509(stored: &[u8]) -> Option<Vec<u8>> {
+    let der = SliceReader::new(stored).ok()?.tlv_bytes().ok()?;
+    x509_cert::Certificate::from_der(der).ok()?;
+    Some(der.to_vec())
 }
 
 /// The certificate inflated, or as stored if it does not inflate.

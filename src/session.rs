@@ -98,7 +98,8 @@ impl<T: Transport> Session<T> {
     /// # Errors
     ///
     /// Those of [`Session::open`], [`Error::Status`] if a file cannot be read and
-    /// [`Error::MalformedPkcs15`].
+    /// [`Error::MalformedPkcs15`] if a directory cannot be decoded, a certificate has no file in
+    /// its path or its bytes are not an X.509 certificate.
     pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
         operation(&mut self.transport, certificates::load)
     }
@@ -107,8 +108,11 @@ impl<T: Transport> Session<T> {
     ///
     /// # Errors
     ///
-    /// Those of [`Session::open`], [`Error::PinBlocked`], [`Error::SecureChannel`] if the mutual
-    /// authentication fails and [`Error::Status`] if the card gives no retry count.
+    /// Those of [`Session::open`], [`Error::PinBlocked`], [`Error::SecureChannel`] if the card
+    /// refuses a step of the mutual authentication up to `EXTERNAL AUTHENTICATE` or fails it,
+    /// [`Error::Status`] if the card refuses `INTERNAL AUTHENTICATE`, `GET CHALLENGE` or
+    /// `GET CHIP INFO` or gives no retry count, and [`Error::CardReset`] or [`Error::Transport`]
+    /// if either strikes during the authentication.
     pub fn pin_retries(&mut self) -> Result<u8, Error> {
         let idesp = self.idesp.as_deref();
         let roots = &self.roots;
@@ -127,7 +131,7 @@ impl<T: Transport> Session<T> {
     /// [`Error::InvalidPinFormat`] and [`Error::DigestLength`] before touching the card, those of
     /// [`Session::pin_retries`], [`Error::PinRetriesChanged`] if the retries moved between the two
     /// phases, [`Error::WrongPin`] after the single attempt and [`Error::Status`] if the card
-    /// refuses the signature.
+    /// refuses the signature. The channel errors are those of [`Session::pin_retries`].
     pub fn sign(
         &mut self,
         digest: &[u8],

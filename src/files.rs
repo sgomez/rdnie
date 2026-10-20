@@ -62,15 +62,15 @@ const FCI: u8 = 0x6F;
 pub(crate) struct Location(Vec<[u8; 2]>);
 
 impl Location {
-    /// Builds a location from file IDs, dropping any `3F00`.
+    /// Builds a location from file IDs, dropping any `3F00`; `None` if no file is left.
     pub(crate) fn new(path: &[u8]) -> Option<Self> {
         let ids = path.chunks(2).map(|id| <[u8; 2]>::try_from(id).ok());
         let ids: Option<Vec<[u8; 2]>> = ids.collect();
         let ids = ids?
             .into_iter()
             .filter(|id| *id != MASTER_FILE_ID)
-            .collect();
-        Some(Self(ids))
+            .collect::<Vec<_>>();
+        (!ids.is_empty()).then_some(Self(ids))
     }
 
     /// ID of the file the path ends in.
@@ -91,7 +91,9 @@ pub(crate) fn read(card: &mut dyn Transport, location: &Location) -> Result<Vec<
 
 /// Selects the master file by name.
 pub(crate) fn select_master_file(card: &mut dyn Transport) -> Result<(), Error> {
-    select(card, 0x04, MASTER_FILE_NAME).map(drop)
+    card.transmit(&master_file_selection())?
+        .into_success()
+        .map(drop)
 }
 
 /// `SELECT` of the master file by name.
@@ -185,4 +187,58 @@ fn read_binary_complete(card: &mut dyn Transport, length: usize) -> Result<Vec<u
         offset += MAX_READ_CHUNK;
     }
     Ok(content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Location, read, select_master_file};
+    use crate::{
+        cwa14890,
+        emulator::{DNIE_3_ATR, EmulatedDnie, component_root_public_key},
+        key_sets::{ComponentRoots, R1_USER},
+        secure_messaging::Protected,
+        session::tests::card_with_channel,
+    };
+
+    const FILE: [u8; 2] = [0x60, 0x10];
+
+    fn read_under_channel(card: EmulatedDnie) -> Vec<u8> {
+        let mut card = card;
+        let roots = ComponentRoots::only(component_root_public_key());
+        let mut channel = cwa14890::open(&mut card, &R1_USER, &roots).unwrap();
+        let mut protected = Protected {
+            channel: &mut channel,
+            card: &mut card,
+        };
+        read(
+            &mut protected,
+            &Location::new(&[0x3F, 0x00, 0x60, 0x10]).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn keeps_the_authenticated_chunk_that_ends_at_an_end_of_file_warning() {
+        let content: Vec<u8> = (0..=255).cycle().take(300).collect();
+        let card = card_with_channel()
+            .with_file(&[FILE], content.clone())
+            .overstating_length(&[FILE], 200);
+        assert_eq!(read_under_channel(card), content);
+    }
+
+    #[test]
+    fn drops_data_a_secure_channel_did_not_authenticate() {
+        let content: Vec<u8> = (0..=255).cycle().take(300).collect();
+        let card = card_with_channel()
+            .with_file(&[FILE], content)
+            .answering_a_read_unauthenticated_with(0x6282);
+        assert_eq!(read_under_channel(card), []);
+    }
+
+    #[test]
+    fn selects_the_master_file_whatever_a_card_answers_with_9000() {
+        let mut card =
+            EmulatedDnie::new(&DNIE_3_ATR).answering_master_file_selection_with(&[1, 2, 3]);
+        assert!(select_master_file(&mut card).is_ok());
+    }
 }

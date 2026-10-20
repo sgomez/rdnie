@@ -42,43 +42,47 @@ pub struct HolderCertificate {
     pub key: Option<RsaPrivateKey>,
     id: u8,
     compressed: bool,
+    trailing: usize,
+    cdf_path: Option<Vec<u8>>,
 }
 
 impl HolderCertificate {
+    /// A self-signed X.509 certificate of at least `length` bytes.
     pub fn new(id: u8, length: usize) -> Self {
+        let base = x509_der(id, "");
+        let padding = "a".repeat(length.saturating_sub(base.len()));
+        Self::with_der(id, x509_der(id, &padding))
+    }
+
+    /// A self-signed X.509 certificate of a holder key pair the card can sign with.
+    pub fn signing(id: u8) -> Self {
         Self {
-            der: fake_der(id, length),
+            key: Some(HOLDER_KEY.clone()),
+            ..Self::new(id, 0)
+        }
+    }
+
+    /// A certificate whose bytes are DER-shaped but not X.509.
+    pub fn not_x509(id: u8, length: usize) -> Self {
+        Self::with_der(id, fake_der(id, length))
+    }
+
+    /// Lists the certificate in the CDF under this path instead of its own file.
+    pub fn listed_at(mut self, path: &[u8]) -> Self {
+        self.cdf_path = Some(path.to_vec());
+        self
+    }
+
+    fn with_der(id: u8, der: Vec<u8>) -> Self {
+        Self {
+            der,
             file: [0x70, id],
             key_file: Some([0x01, id]),
             key: None,
             id,
             compressed: false,
-        }
-    }
-
-    /// A self-signed X.509 certificate of a holder key pair the card can sign with.
-    pub fn signing(id: u8) -> Self {
-        let key = HOLDER_KEY.clone();
-        let spki = SubjectPublicKeyInfoOwned::from_der(
-            key.to_public_key().to_public_key_der().unwrap().as_bytes(),
-        )
-        .unwrap();
-        let signer = SigningKey::<Sha256>::new(key.clone());
-        let certificate = CertificateBuilder::new(
-            Profile::Root,
-            SerialNumber::from(u32::from(id)),
-            Validity::from_now(Duration::from_secs(3600)).unwrap(),
-            Name::from_str("CN=Test holder").unwrap(),
-            spki,
-            &signer,
-        )
-        .unwrap()
-        .build::<Signature>()
-        .unwrap();
-        Self {
-            der: certificate.to_der().unwrap(),
-            key: Some(key),
-            ..Self::new(id, 120)
+            trailing: 0,
+            cdf_path: None,
         }
     }
 
@@ -87,15 +91,23 @@ impl HolderCertificate {
         self
     }
 
+    /// Stores `bytes` of padding after the DER.
+    pub fn followed_by(mut self, bytes: usize) -> Self {
+        self.trailing = bytes;
+        self
+    }
+
     pub fn without_key(mut self) -> Self {
         self.key_file = None;
         self
     }
 
-    /// The bytes the card stores: the DER, or an 8-byte header and the DER in zlib.
+    /// The bytes the card stores: the DER and its padding, or an 8-byte header and the DER in zlib.
     pub fn stored(&self) -> Vec<u8> {
         if !self.compressed {
-            return self.der.clone();
+            let mut stored = self.der.clone();
+            stored.resize(stored.len() + self.trailing, 0xFF);
+            return stored;
         }
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(&self.der).unwrap();
@@ -118,7 +130,10 @@ impl HolderCertificate {
 
 pub fn cdf(certificates: &[HolderCertificate]) -> Vec<u8> {
     padded(certificates.iter().map(|certificate| {
-        let path = [MASTER_FILE, certificate.file].concat();
+        let path = certificate
+            .cdf_path
+            .clone()
+            .unwrap_or_else(|| [MASTER_FILE, certificate.file].concat());
         sequence(&[
             sequence(&[certificate.label()]),
             sequence(&[tlv(OCTET_STRING, &certificate.pkcs15_id())]),
@@ -184,4 +199,25 @@ fn fake_der(seed: u8, length: usize) -> Vec<u8> {
     der.extend_from_slice(&u16::try_from(length - 4).unwrap().to_be_bytes());
     der.extend(filler);
     der
+}
+
+fn x509_der(id: u8, common_name: &str) -> Vec<u8> {
+    let key = HOLDER_KEY.clone();
+    let spki = SubjectPublicKeyInfoOwned::from_der(
+        key.to_public_key().to_public_key_der().unwrap().as_bytes(),
+    )
+    .unwrap();
+    let signer = SigningKey::<Sha256>::new(key);
+    let certificate = CertificateBuilder::new(
+        Profile::Root,
+        SerialNumber::from(u32::from(id)),
+        Validity::from_now(Duration::from_secs(3600)).unwrap(),
+        Name::from_str(&format!("CN=Test holder{common_name}")).unwrap(),
+        spki,
+        &signer,
+    )
+    .unwrap()
+    .build::<Signature>()
+    .unwrap();
+    certificate.to_der().unwrap()
 }
