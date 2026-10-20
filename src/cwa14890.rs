@@ -226,11 +226,28 @@ fn verify_ifd_certificate_chain(card: &mut dyn Transport, keys: &KeySet) -> Resu
 }
 
 fn set_public_key_to_verification(card: &mut dyn Transport, reference: &[u8]) -> Result<(), Error> {
-    send(card, 0x00, MSE_SET, 0x81, 0xB6, tlv(0x83, reference), None).map(drop)
+    send(card, 0x00, MSE_SET, 0x81, 0xB6, tlv(0x83, reference), None)
+        .map_err(|error| {
+            refusal(
+                error,
+                "the card refused to select the key that verifies certificates",
+            )
+        })
+        .map(drop)
 }
 
 fn verify_certificate(card: &mut dyn Transport, cvc: &[u8]) -> Result<(), Error> {
-    send(card, 0x00, 0x2A, 0x00, 0xAE, cvc.to_vec(), None).map(drop)
+    send(card, 0x00, 0x2A, 0x00, 0xAE, cvc.to_vec(), None)
+        .map_err(|error| refusal(error, "the card refused to verify the terminal certificate"))
+        .map(drop)
+}
+
+/// A status word error becomes a refusal of the handshake step; any other error is kept.
+fn refusal(error: Error, reason: &'static str) -> Error {
+    match error {
+        Error::Status(_) => Error::SecureChannel(reason),
+        other => other,
+    }
 }
 
 /// Selects the terminal and ICC keys, has the card sign `RND.IFD ‖ CHR` and returns `Kicc`.
@@ -245,7 +262,8 @@ fn internal_authentication(
         .copy_from_slice(&keys.terminal_chr);
     let mut template = tlv(0x83, &terminal_reference);
     template.extend(tlv(0x84, &ICC_PRIVATE_KEY_REFERENCE));
-    send(card, 0x00, MSE_SET, 0xC1, 0xA4, template, None)?;
+    send(card, 0x00, MSE_SET, 0xC1, 0xA4, template, None)
+        .map_err(|error| refusal(error, "the card refused to select the authentication keys"))?;
 
     let challenge = [&rnd_ifd[..], &keys.terminal_chr].concat();
     let answer = send(card, 0x00, 0x88, 0x00, 0x00, challenge.clone(), None)?;
@@ -320,7 +338,7 @@ fn external_authentication(
     let token = rsa_encrypt(icc_key, &sigmin).map_err(|_| EXTERNAL_AUTHENTICATION_FAILED)?;
     let token = bytes(&token, icc_key.size()).ok_or(EXTERNAL_AUTHENTICATION_FAILED)?;
     send(card, 0x00, 0x82, 0x00, 0x00, token, None)
-        .map_err(|_| Error::SecureChannel("the card refused the external authentication"))?;
+        .map_err(|error| refusal(error, "the card refused the external authentication"))?;
     Ok(kifd)
 }
 
@@ -378,7 +396,9 @@ fn send(
 mod tests {
     use crate::{
         Error, Session,
-        emulator::{EmulatedDnie, component_root_public_key, foreign_root_public_key},
+        emulator::{
+            EmulatedDnie, HandshakeFault, component_root_public_key, foreign_root_public_key,
+        },
         key_sets::ComponentRoots,
         session::tests::{card_with_channel, open},
     };
@@ -459,6 +479,70 @@ mod tests {
             Session::open(card_with_channel()).unwrap(),
             NOT_FROM_THE_ROOT,
         );
+    }
+
+    fn open_failing(fault: HandshakeFault) -> Result<u8, Error> {
+        open(card_with_channel().failing(fault)).pin_retries()
+    }
+
+    #[test]
+    fn reports_a_reset_during_the_external_authentication() {
+        assert!(matches!(
+            open_failing(HandshakeFault::ResettingOnExternalAuthenticate),
+            Err(Error::CardReset)
+        ));
+    }
+
+    #[test]
+    fn reports_a_transport_failure_during_the_external_authentication() {
+        assert!(matches!(
+            open_failing(HandshakeFault::FailingOnExternalAuthenticate),
+            Err(Error::Transport(_))
+        ));
+    }
+
+    #[test]
+    fn reports_a_refused_external_authentication_as_a_secure_channel_failure() {
+        assert!(matches!(
+            open_failing(HandshakeFault::RefusingExternalAuthenticate),
+            Err(Error::SecureChannel(
+                "the card refused the external authentication"
+            ))
+        ));
+    }
+
+    #[test]
+    fn reports_a_refused_handshake_step_as_a_secure_channel_failure() {
+        for (fault, reason) in [
+            (
+                HandshakeFault::RefusingMseVerifyCertificate,
+                "the card refused to select the key that verifies certificates",
+            ),
+            (
+                HandshakeFault::RefusingVerifyCertificate,
+                "the card refused to verify the terminal certificate",
+            ),
+            (
+                HandshakeFault::RefusingMseAuthentication,
+                "the card refused to select the authentication keys",
+            ),
+        ] {
+            assert!(
+                matches!(open_failing(fault), Err(Error::SecureChannel(message)) if message == reason),
+                "{reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_the_status_of_the_other_refused_steps() {
+        for fault in [
+            HandshakeFault::RefusingInternalAuthenticate,
+            HandshakeFault::RefusingChallenge,
+            HandshakeFault::RefusingChipInfo,
+        ] {
+            assert!(matches!(open_failing(fault), Err(Error::Status(_))));
+        }
     }
 
     const NOT_FROM_THE_ROOT: &str =
