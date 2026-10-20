@@ -25,7 +25,7 @@ mod signature;
 mod transport;
 
 pub use apdu::{Command, Response, StatusWord};
-pub use atr::is_dnie;
+pub use atr::{describe_atr, is_dnie};
 pub use certificates::{Certificate, INTERMEDIATE_CA_LABEL, KeyReference};
 pub use error::Error;
 pub use holder::Holder;

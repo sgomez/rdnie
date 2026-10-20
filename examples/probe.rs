@@ -1,11 +1,9 @@
 //! Manual probe for the card's holder: prints ATR, status words, labels, counts and pass/fail only;
 //! `--verbose` also prints the holder's data, which must never leave the machine.
 
-use std::fmt::Write as _;
-
 use rdnie::{
     Certificate, Error, HashAlgorithm, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration, PcscTransport,
-    Pin, Session,
+    Pin, Session, describe_atr,
 };
 use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
 use sha2_010::{Digest, Sha256};
@@ -23,7 +21,8 @@ fn main() {
 
 fn run() -> Result<(), Error> {
     let transport = PcscTransport::connect_first_dnie()?;
-    println!("ATR: {}", hex(&transport.atr()?));
+    let atr = transport.atr()?;
+    println!("{}", describe_atr(&atr));
 
     let mut session = Session::open(transport)?;
     println!("card: DNIe 3.0/4.0");
@@ -147,12 +146,5 @@ fn verifies(der: &[u8], digest: &[u8], signature: &[u8]) -> bool {
     RsaPublicKey::from_public_key_der(&spki).is_ok_and(|key| {
         key.verify(Pkcs1v15Sign::new::<Sha256>(), digest, signature)
             .is_ok()
-    })
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02X}");
-        out
     })
 }
