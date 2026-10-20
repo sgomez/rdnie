@@ -25,7 +25,7 @@ just fuzz-seed             # seed corpora from the emulator, into fuzz/corpus/
 just fuzz <target> [secs]  # one target, 60 seconds by default
 ```
 
-The targets are the `[[bin]]` entries of `fuzz/Cargo.toml`.
+The targets are the `[[bin]]` entries of `fuzz/Cargo.toml`. A weekly workflow runs each of them for 60 seconds.
 
 ## License
 

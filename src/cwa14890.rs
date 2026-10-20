@@ -185,6 +185,29 @@ fn decode_certificate(encoded: &[u8]) -> Option<StoredCertificate> {
     Some(StoredCertificate { certificate, tbs })
 }
 
+/// Checks `challenge ‖ component certificate ‖ answer`, the fuzz layout of the internal
+/// authentication of a PIN channel without IDESP, and returns whether a root signed the certificate.
+#[cfg(any(test, fuzzing))]
+pub(crate) fn check_answers(input: &[u8], roots: &ComponentRoots) -> Result<bool, Error> {
+    let keys = KeySet::for_card(None, crate::key_sets::Channel::Pin);
+    let (challenge, rest) = input
+        .split_at_checked(CHALLENGE_LENGTH + keys.terminal_chr.len())
+        .ok_or(MALFORMED_CERTIFICATE)?;
+    let encoded = SliceReader::new(rest)
+        .and_then(|mut reader| reader.tlv_bytes())
+        .map_err(|_| MALFORMED_CERTIFICATE)?;
+    let certificate = decode_certificate(encoded).ok_or(MALFORMED_CERTIFICATE)?;
+    let signed = roots.iter().any(|root| certificate.is_signed_by(root));
+    let answer = &rest[encoded.len()..];
+    validate_internal_authentication(
+        answer,
+        challenge,
+        &keys.private_key(),
+        &certificate.public_key()?,
+    )?;
+    Ok(signed)
+}
+
 impl StoredCertificate {
     fn public_key(&self) -> Result<RsaPublicKey, Error> {
         let spki = self
@@ -392,15 +415,66 @@ fn send(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use super::check_answers;
     use crate::{
         Error, Session,
         emulator::{
-            EmulatedDnie, HandshakeFault, component_root_public_key, foreign_root_public_key,
+            EmulatedDnie, HandshakeFault, Recorder, component_certificate,
+            component_root_public_key, foreign_root_public_key, intermediate_certificate,
         },
         key_sets::ComponentRoots,
         session::tests::{card_with_channel, open},
     };
+
+    const INTERNAL_AUTHENTICATE: u8 = 0x88;
+
+    /// The challenge and the card's answer of the internal authentication of a handshake.
+    pub(crate) fn recorded_internal_authentication() -> (Vec<u8>, Vec<u8>) {
+        let roots = ComponentRoots::only(component_root_public_key());
+        let mut session =
+            Session::open_with_roots(Recorder::new(card_with_channel()), roots).unwrap();
+        session.pin_retries().unwrap();
+        let exchanges = session.into_transport().exchanges;
+        let (command, response) = exchanges
+            .iter()
+            .find(|(command, _)| command[1] == INTERNAL_AUTHENTICATE)
+            .unwrap();
+        let length = usize::from(command[4]);
+        (
+            command[5..5 + length].to_vec(),
+            response[..response.len() - 2].to_vec(),
+        )
+    }
+
+    /// `challenge ‖ certificate ‖ answer`, as the `cwa14890` fuzz target takes them.
+    pub(crate) fn answers(challenge: &[u8], certificate: &[u8], answer: &[u8]) -> Vec<u8> {
+        [challenge, certificate, answer].concat()
+    }
+
+    #[test]
+    fn checks_the_answers_of_a_recorded_handshake_with_the_component_key() {
+        let (challenge, answer) = recorded_internal_authentication();
+        let roots = ComponentRoots::only(component_root_public_key());
+        let mut tampered = answer.clone();
+        tampered[64] ^= 0x01;
+        assert!(matches!(
+            check_answers(
+                &answers(&challenge, &component_certificate(), &answer),
+                &roots
+            ),
+            Ok(false)
+        ));
+        for refused in [
+            answers(&challenge, &component_certificate(), &tampered),
+            answers(&challenge, &intermediate_certificate(), &answer),
+        ] {
+            assert!(matches!(
+                check_answers(&refused, &roots),
+                Err(Error::SecureChannel(_))
+            ));
+        }
+    }
 
     #[test]
     fn refuses_a_tampered_internal_authentication() {

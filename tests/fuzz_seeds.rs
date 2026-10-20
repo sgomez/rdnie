@@ -2,10 +2,12 @@
 
 mod emulator;
 
-use std::{cell::RefCell, collections::BTreeSet, fs, path::Path, rc::Rc};
+use std::collections::BTreeSet;
 
-use emulator::{DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, cdf, prkdf};
-use rdnie::{Error, Session, Transport};
+use emulator::{
+    DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, Recorder, cdf, prkdf, write_corpus,
+};
+use rdnie::Session;
 use x509_cert::{
     attr::AttributeTypeAndValue,
     der::{
@@ -17,35 +19,6 @@ use x509_cert::{
 };
 
 const SELECT: u8 = 0xA4;
-
-type Exchanges = Rc<RefCell<Vec<(Vec<u8>, Vec<u8>)>>>;
-
-/// Keeps every command and the raw response the emulator gave it.
-struct Recorder {
-    card: EmulatedDnie,
-    exchanges: Exchanges,
-}
-
-impl Transport for Recorder {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
-        let response = self.card.transmit_raw(apdu)?;
-        self.exchanges
-            .borrow_mut()
-            .push((apdu.to_vec(), response.clone()));
-        Ok(response)
-    }
-
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        self.card.reset()
-    }
-
-    fn transaction<R>(
-        &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
-    ) -> Result<R, Error> {
-        body(self)
-    }
-}
 
 fn certificate_sets() -> Vec<Vec<HolderCertificate>> {
     vec![
@@ -87,26 +60,12 @@ fn dnie_subject() -> RdnSequence {
 }
 
 fn recorded(delivery: Delivery, certificates: &[HolderCertificate]) -> Vec<(Vec<u8>, Vec<u8>)> {
-    let exchanges = Exchanges::default();
     let card = EmulatedDnie::new(&DNIE_3_ATR)
         .delivering(delivery)
         .with_certificates(certificates);
-    let recorder = Recorder {
-        card,
-        exchanges: Rc::clone(&exchanges),
-    };
-    Session::open(recorder).unwrap().certificates().unwrap();
-    exchanges.take()
-}
-
-fn write(target: &str, seeds: BTreeSet<Vec<u8>>) {
-    let corpus = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("fuzz/corpus")
-        .join(target);
-    fs::create_dir_all(&corpus).unwrap();
-    for (index, seed) in seeds.into_iter().enumerate() {
-        fs::write(corpus.join(format!("seed-{index}")), seed).unwrap();
-    }
+    let mut session = Session::open(Recorder::new(card)).unwrap();
+    session.certificates().unwrap();
+    session.into_transport().exchanges
 }
 
 #[test]
@@ -130,15 +89,15 @@ fn writes_the_seed_corpora() {
     let certificates = sets.iter().flatten();
     let mut holders: BTreeSet<_> = certificates.clone().map(|c| c.der.clone()).collect();
     holders.insert(HolderCertificate::with_subject(1, dnie_subject()).der);
-    write("apdu", responses);
-    write("files", fcis);
-    write(
+    write_corpus("apdu", responses);
+    write_corpus("files", fcis);
+    write_corpus(
         "pkcs15",
         sets.iter().flat_map(|set| [cdf(set), prkdf(set)]).collect(),
     );
-    write(
+    write_corpus(
         "certificates",
         certificates.map(HolderCertificate::stored).collect(),
     );
-    write("holder", holders);
+    write_corpus("holder", holders);
 }
