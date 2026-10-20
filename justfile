@@ -24,6 +24,6 @@ test-one filter:
 detect:
     cargo run --quiet --example detect
 
-# Real-card probe, run by hand by the card's holder; prints ATR, counts and pass/fail only. `--sign` also signs, after asking for the PIN.
+# Real-card probe, run by hand by the card's holder; prints ATR, labels, counts and pass/fail only. `--sign` also signs, after asking for the PIN.
 probe *args:
     cargo run --quiet --example probe -- {{ args }}

@@ -1,8 +1,11 @@
-//! Manual probe for the card's holder: prints ATR, status words, counts and pass/fail only.
+//! Manual probe for the card's holder: prints ATR, status words, labels, counts and pass/fail only.
 
 use std::fmt::Write as _;
 
-use rdnie::{Certificate, Error, HashAlgorithm, KeyGeneration, PcscTransport, Pin, Session};
+use rdnie::{
+    Certificate, Error, HashAlgorithm, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration, PcscTransport,
+    Pin, Session,
+};
 use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
 use sha2_010::{Digest, Sha256};
 use x509_cert::{
@@ -31,6 +34,19 @@ fn run() -> Result<(), Error> {
 
     let certificates = session.certificates()?;
     println!("certificates: {}", certificates.len());
+    for certificate in &certificates {
+        println!("label: {}", certificate.label);
+        holder(&certificate.der);
+    }
+    let intermediate = session.certificate(INTERMEDIATE_CA_LABEL)?;
+    println!(
+        "intermediate CA: {}",
+        match intermediate {
+            Some(der) if x509_cert::Certificate::from_der(&der).is_ok() => "pass",
+            Some(_) => "fail (not X.509)",
+            None => "fail (not found)",
+        }
+    );
 
     match session.pin_retries() {
         Ok(retries) => {
@@ -85,6 +101,25 @@ fn sign(session: &mut Session<PcscTransport>, certificates: &[Certificate]) -> R
         if verified { "pass" } else { "fail" }
     );
     Ok(())
+}
+
+/// Prints which holder fields the certificate yields, never their values.
+fn holder(der: &[u8]) {
+    let holder = match Holder::from_der(der) {
+        Ok(holder) => holder,
+        Err(error) => {
+            println!("  holder: fail ({error})");
+            return;
+        }
+    };
+    let present = |field: &Option<String>| if field.is_some() { "yes" } else { "no" };
+    println!(
+        "  holder: name {}, first surname {}, second surname {}, number {}",
+        present(&holder.name),
+        present(&holder.first_surname),
+        present(&holder.second_surname),
+        present(&holder.number),
+    );
 }
 
 fn is_signature(der: &[u8]) -> bool {
