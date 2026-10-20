@@ -19,6 +19,23 @@ pub struct Unwrapped {
     pub le: Option<usize>,
 }
 
+/// How the card lays out the objects of its protected responses.
+#[derive(Clone, Copy, Default)]
+pub enum ResponseShape {
+    #[default]
+    Standard,
+    /// Appends these bytes after the MAC object.
+    TrailingBytes(&'static [u8]),
+    /// Moves up to this many trailing data bytes into the status-word object, before the status word.
+    LongStatusWord(usize),
+    /// Sends only the first byte of the status word in its object.
+    ShortStatusWord,
+    /// Starts the cryptogram with this byte instead of `01`.
+    CryptogramIndicator(u8),
+    /// Sends an empty cryptogram object, even without data.
+    EmptyCryptogram,
+}
+
 pub struct CardChannel {
     kenc: [u8; 16],
     kmac: [u8; 16],
@@ -89,22 +106,40 @@ impl CardChannel {
         }
     }
 
-    /// Wraps a plain answer as `[87] 99 8E` followed by `90 00`.
-    pub fn wrap(&mut self, answer: &[u8]) -> Vec<u8> {
+    /// Wraps a plain answer as `[87] 99 8E` followed by `90 00`, laid out as `shape` says.
+    pub fn wrap(&mut self, answer: &[u8], shape: ResponseShape) -> Vec<u8> {
         self.ssc += 1;
         let (data, status) = answer.split_at(answer.len() - 2);
+        let moved = match shape {
+            ResponseShape::LongStatusWord(moved) => data.len().min(moved),
+            _ => 0,
+        };
+        let (data, moved) = data.split_at(data.len() - moved);
         let mut objects = Vec::new();
-        if !data.is_empty() {
-            let mut cryptogram = vec![0x01];
-            cryptogram.extend(
-                cbc::Encryptor::<TdesEde2>::new(&self.kenc.into(), &[0; BLOCK].into())
-                    .encrypt_padded_vec::<Iso7816>(data),
-            );
+        if !data.is_empty() || matches!(shape, ResponseShape::EmptyCryptogram) {
+            let mut cryptogram = match shape {
+                ResponseShape::CryptogramIndicator(first) => vec![first],
+                ResponseShape::EmptyCryptogram => vec![],
+                _ => vec![0x01],
+            };
+            if !data.is_empty() {
+                cryptogram.extend(
+                    cbc::Encryptor::<TdesEde2>::new(&self.kenc.into(), &[0; BLOCK].into())
+                        .encrypt_padded_vec::<Iso7816>(data),
+                );
+            }
             push_tlv(&mut objects, 0x87, &cryptogram);
         }
-        push_tlv(&mut objects, 0x99, status);
+        let status = match shape {
+            ResponseShape::ShortStatusWord => status[..1].to_vec(),
+            _ => [moved, status].concat(),
+        };
+        push_tlv(&mut objects, 0x99, &status);
         let mac = self.mac(&objects);
         push_tlv(&mut objects, 0x8E, &mac);
+        if let ResponseShape::TrailingBytes(trailing) = shape {
+            objects.extend_from_slice(trailing);
+        }
         objects.extend_from_slice(&[0x90, 0x00]);
         objects
     }
