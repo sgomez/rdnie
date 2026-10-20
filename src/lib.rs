@@ -22,6 +22,7 @@ mod pkcs15;
 mod secure_messaging;
 mod session;
 mod signature;
+mod standard_error_codes;
 mod transport;
 
 pub use apdu::{Command, Response, StatusWord};
