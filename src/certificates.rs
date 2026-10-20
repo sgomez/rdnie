@@ -118,8 +118,7 @@ pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Loaded>, Error> {
     let listed = pkcs15::entries(&files::read(card, &location(CDF)?)?, true)?;
     let mut ders = Vec::with_capacity(listed.len());
     for entry in &listed {
-        let stored = decompressed(files::read(card, &location(&entry.path)?)?);
-        ders.push(x509(&stored).ok_or(Error::MalformedPkcs15)?);
+        ders.push(stored_x509(files::read(card, &location(&entry.path)?)?)?);
     }
     let keys = pkcs15::entries(&files::read(card, &location(PRKDF)?)?, false)?;
     let mut certificates = Vec::with_capacity(ders.len());
@@ -144,6 +143,11 @@ pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Loaded>, Error> {
 
 fn location(path: &[u8]) -> Result<Location, Error> {
     Location::new(path).ok_or(Error::MalformedPkcs15)
+}
+
+/// The X.509 certificate a certificate file stores, inflated if compressed.
+pub(crate) fn stored_x509(stored: Vec<u8>) -> Result<Vec<u8>, Error> {
+    x509(&decompressed(stored)).ok_or(Error::MalformedPkcs15)
 }
 
 /// The X.509 certificate at the start of `stored`, without the bytes after it.
