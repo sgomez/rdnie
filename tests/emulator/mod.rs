@@ -85,6 +85,18 @@ pub struct EmulatedDnie {
     master_file_answer: Vec<u8>,
     handshake_fault: Option<HandshakeFault>,
     unauthenticated_read: Option<u16>,
+    endless: Option<Endless>,
+}
+
+/// A request to try again the card repeats to every protected command it targets.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Endless {
+    /// Outer `61xx`, then again to every `GET RESPONSE`.
+    Pending,
+    /// Inner `6Cxx`.
+    WrongLength,
+    /// Inner `6Cxx`, only to a `VERIFY` carrying a PIN.
+    WrongLengthOnPin,
 }
 
 /// A step of the handshake the card fails.
@@ -173,6 +185,7 @@ impl EmulatedDnie {
             master_file_answer: Vec::new(),
             handshake_fault: None,
             unauthenticated_read: None,
+            endless: None,
         }
     }
 
@@ -299,6 +312,24 @@ impl EmulatedDnie {
         self
     }
 
+    /// Answers `61xx` to every protected command and to every `GET RESPONSE` after it.
+    pub fn pending_forever_inside_the_channel(mut self) -> Self {
+        self.endless = Some(Endless::Pending);
+        self
+    }
+
+    /// Answers `6Cxx` inside the channel to every protected command, whatever its Le.
+    pub fn asking_a_wrong_length_forever_inside_the_channel(mut self) -> Self {
+        self.endless = Some(Endless::WrongLength);
+        self
+    }
+
+    /// Answers `6Cxx` inside the channel to every `VERIFY` carrying a PIN, without checking it.
+    pub fn asking_a_wrong_length_forever_on_the_pin(mut self) -> Self {
+        self.endless = Some(Endless::WrongLengthOnPin);
+        self
+    }
+
     /// Answers SELECT of the master file by name with `9000` and `answer`, which is no FCI.
     pub fn answering_master_file_selection_with(mut self, answer: &[u8]) -> Self {
         self.master_file_answer = answer.to_vec();
@@ -358,7 +389,12 @@ impl EmulatedDnie {
             READ_BINARY => self.read_binary(apdu),
             GET_CHALLENGE if self.faulty(HandshakeFault::RefusingChallenge) => vec![0x69, 0x85],
             GET_CHALLENGE => self.deliver(CHALLENGE.to_vec(), apdu.le),
-            GET_RESPONSE if matches!(self.delivery, Delivery::EndlessPending) => vec![0x61, 0x05],
+            GET_RESPONSE
+                if matches!(self.delivery, Delivery::EndlessPending)
+                    || self.endless == Some(Endless::Pending) =>
+            {
+                vec![0x61, 0x05]
+            }
             GET_RESPONSE if !self.pending.is_empty() => self.serve_pending(apdu.le.unwrap_or(256)),
             GET_RESPONSE => vec![0x69, 0x85],
             _ if self.chip.is_some() => self.authenticate(apdu),
@@ -411,11 +447,20 @@ impl EmulatedDnie {
         let Some(inner) = channel.unwrap(apdu) else {
             return vec![0x66, 0x88];
         };
-        let answer = if inner.ins == VERIFY {
+        if inner.ins == VERIFY {
             self.pin_queries.push(PinQuery {
                 transaction: self.transactions,
                 with_pin: !inner.data.is_empty(),
             });
+        }
+        let wrong_length = match self.endless {
+            Some(Endless::WrongLength) => true,
+            Some(Endless::WrongLengthOnPin) => inner.ins == VERIFY && !inner.data.is_empty(),
+            _ => false,
+        };
+        let answer = if wrong_length {
+            vec![0x6C, 0x05]
+        } else if inner.ins == VERIFY {
             if inner.data.is_empty() {
                 self.retries_status().to_be_bytes().to_vec()
             } else {
@@ -604,6 +649,9 @@ impl Transport for EmulatedDnie {
         self.commands += 1;
         let protected = apdu.first().is_some_and(|cla| cla & PROTECTED == PROTECTED);
         if protected && self.channel.is_some() {
+            if self.endless == Some(Endless::Pending) {
+                return Ok(vec![0x61, 0x05]);
+            }
             return match self.fault.take() {
                 Some(Fault::Reset) => {
                     self.reset()?;

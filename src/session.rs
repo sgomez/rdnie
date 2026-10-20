@@ -626,6 +626,36 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn ends_an_endless_pending_response_inside_the_channel_with_its_status() {
+        let card = card_with_channel().pending_forever_inside_the_channel();
+        assert!(matches!(
+            retries(card),
+            Err(Error::Status(StatusWord(0x6105)))
+        ));
+    }
+
+    #[test]
+    fn ends_an_endless_wrong_length_inside_the_channel_with_its_status() {
+        let mut session =
+            open(card_with_channel().asking_a_wrong_length_forever_inside_the_channel());
+        assert!(matches!(
+            session.pin_retries(),
+            Err(Error::Status(StatusWord(0x6C05)))
+        ));
+        assert_eq!(session.transport.pin_queries().len(), 1 + 2);
+    }
+
+    #[test]
+    fn sends_the_pin_at_most_three_times_on_an_endless_wrong_length() {
+        let card = signing_card().asking_a_wrong_length_forever_on_the_pin();
+        let (result, card) = sign_with_pin(card, DEFAULT_PIN);
+        assert!(matches!(result, Err(Error::Status(StatusWord(0x6C05)))));
+        let attempts = card.pin_queries().iter().filter(|query| query.with_pin);
+        assert_eq!(attempts.count(), 3);
+        assert_eq!(retries(card).unwrap(), 3);
+    }
+
+    #[test]
     fn starts_a_fresh_channel_after_each_failure() {
         let faulty = [
             card_with_channel().resetting_mid_channel(),
