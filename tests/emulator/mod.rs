@@ -13,7 +13,7 @@ use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 
 use channel::CardChannel;
 use chip::Chip;
-pub use chip::{Handshake, TerminalKey, component_root_public_key};
+pub use chip::{Handshake, TerminalKey, component_root_public_key, foreign_root_public_key};
 pub use pkcs15::HolderCertificate;
 
 /// DNIe 3.0 ATR: byte 15 is `04`.

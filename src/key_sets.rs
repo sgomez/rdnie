@@ -13,9 +13,9 @@
 // - es.gob.jmulticard.card.cwa14890.Cwa14890PrivateConstants (Tomás García-Merás)
 // - es.gob.jmulticard.connection.cwa14890.ChannelType (Tomás García-Merás)
 // rdnie takes the EUPL 1.1+ branch of the dual licence below.
-// The `AC RAIZ COMPONENTES 2` modulus and its choice by issuer come from OpenSC
+// The `AC RAIZ COMPONENTES 2` modulus comes from OpenSC
 // (https://github.com/OpenSC/OpenSC, commit fc27ee8, src/libopensc/cwa-dnie.c,
-// `icc_root_ca_modulus_1` and `dnie_set_channel_data`, LGPL 2.1+).
+// `icc_root_ca_modulus_1`, LGPL 2.1+).
 //
 // Controlador Java de la Secretaria de Estado de Administraciones Publicas
 // para el DNI electronico.
@@ -59,7 +59,6 @@
 //! roots of the chip's component certificates.
 
 use rsa::{BigUint, RsaPrivateKey, RsaPublicKey, pkcs8::DecodePublicKey};
-use x509_cert::name::Name;
 
 /// Support numbers from this one on take the second key generation.
 const R2_IDESP: &str = "BMP100001";
@@ -97,8 +96,6 @@ const COMPONENT_ROOT_2_MODULUS: [u8; 128] = [
     0x46, 0x64, 0x45, 0x83, 0x1D, 0xCD, 0xEA, 0xB0, 0x87, 0x08, 0xF3, 0xF6, 0x22, 0x0E, 0x07, 0x75,
 ];
 
-const COMPONENT_ROOT_2_UNIT: &str = "OU=AC RAIZ COMPONENTES 2";
-
 /// Roots the chip's component certificate chain may end in.
 #[derive(Clone)]
 pub(crate) struct ComponentRoots {
@@ -107,7 +104,7 @@ pub(crate) struct ComponentRoots {
 }
 
 impl ComponentRoots {
-    /// `AC RAIZ COMPONENTES` and `AC RAIZ COMPONENTES 2`, the only roots outside the tests.
+    /// `AC RAIZ COMPONENTES` and `AC RAIZ COMPONENTES 2`, both also in the DGP's libpkcs11-dnie 1.6.8.
     pub(crate) fn embedded() -> Self {
         Self {
             first: RsaPublicKey::from_public_key_der(&COMPONENT_ROOT)
@@ -122,21 +119,17 @@ impl ComponentRoots {
 
     #[cfg(test)]
     pub(crate) fn only(root: RsaPublicKey) -> Self {
-        Self {
-            first: root.clone(),
-            second: root,
-        }
+        Self::pair(root.clone(), root)
     }
 
-    /// The root of a CA certificate issued by `issuer`, chosen as `dnie_set_channel_data` of
-    /// `OpenSC` chooses it.
-    pub(crate) fn for_issuer(&self, issuer: &Name) -> &RsaPublicKey {
-        let second = issuer
-            .0
-            .iter()
-            .flat_map(|rdn| rdn.0.iter())
-            .any(|attribute| attribute.to_string() == COMPONENT_ROOT_2_UNIT);
-        if second { &self.second } else { &self.first }
+    #[cfg(test)]
+    pub(crate) fn pair(first: RsaPublicKey, second: RsaPublicKey) -> Self {
+        Self { first, second }
+    }
+
+    /// The roots in the order to try them: `pk-RCAicc` first.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &RsaPublicKey> {
+        [&self.first, &self.second].into_iter()
     }
 }
 
@@ -451,23 +444,10 @@ mod tests {
     }
 
     #[test]
-    fn picks_the_first_component_root_for_ac_raiz_componentes() {
+    fn embeds_both_component_roots() {
         let roots = ComponentRoots::embedded();
-        let issuer = issuer("CN=000000006573524449600006,OU=AC RAIZ COMPONENTES,OU=DNIE,C=ES");
-        assert_eq!(roots.for_issuer(&issuer), &roots.first);
         assert_eq!(roots.first.size(), 128);
-    }
-
-    #[test]
-    fn picks_the_second_component_root_for_ac_raiz_componentes_2() {
-        let roots = ComponentRoots::embedded();
-        let issuer = issuer("CN=000000006573524449620018,OU=AC RAIZ COMPONENTES 2,OU=DNIE,C=ES");
-        assert_eq!(roots.for_issuer(&issuer), &roots.second);
         assert_eq!(roots.second.n().to_bytes_be(), COMPONENT_ROOT_2_MODULUS);
-    }
-
-    fn issuer(name: &str) -> Name {
-        name.parse().unwrap()
     }
 
     #[test]

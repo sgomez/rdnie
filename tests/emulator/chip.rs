@@ -65,6 +65,7 @@ pub struct Handshake {
 
 struct Pki {
     root: RsaPublicKey,
+    other_root: RsaPublicKey,
     icc: RsaPrivateKey,
     intermediate_certificate: Vec<u8>,
     component_certificate: Vec<u8>,
@@ -79,6 +80,7 @@ static PKI: LazyLock<Pki> = LazyLock::new(|| {
     let icc_public = icc.to_public_key();
     Pki {
         root: root.to_public_key(),
+        other_root: other_root.to_public_key(),
         intermediate_certificate: issue(&root, ROOT, INTERMEDIATE, &intermediate_public),
         component_certificate: issue(&intermediate, INTERMEDIATE, ICC, &icc_public),
         foreign_intermediate_certificate: issue(
@@ -151,6 +153,11 @@ pub fn foreign_intermediate_certificate() -> Vec<u8> {
 /// The public key of the test root the CA certificate chains to.
 pub fn component_root_public_key() -> RsaPublicKey {
     PKI.root.clone()
+}
+
+/// The public key of the root that signed the foreign CA certificate.
+pub fn foreign_root_public_key() -> RsaPublicKey {
+    PKI.other_root.clone()
 }
 
 /// Handshake state between the commands of one mutual authentication.

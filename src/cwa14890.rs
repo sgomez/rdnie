@@ -140,13 +140,12 @@ fn padded_serial(card: &mut dyn Transport) -> Result<Vec<u8>, Error> {
     Ok(padded)
 }
 
-/// The public key of the X.509 component certificate, once its chain to `roots` checks out as
-/// `cwa_verify_icc_certificates` of `OpenSC` checks it.
+/// The public key of the X.509 component certificate, once its chain checks out as
+/// `cwa_verify_icc_certificates` of `OpenSC` checks it, ending in any of `roots`.
 fn icc_public_key(card: &mut dyn Transport, roots: &ComponentRoots) -> Result<RsaPublicKey, Error> {
     let ca = read_certificate(card, COMPONENT_CA_CERTIFICATE)?;
     let icc = read_certificate(card, ICC_CERTIFICATE)?;
-    let root = roots.for_issuer(&ca.certificate.tbs_certificate.issuer);
-    if !ca.is_signed_by(root) {
+    if !roots.iter().any(|root| ca.is_signed_by(root)) {
         return Err(Error::SecureChannel(
             "the component certificate chain is not signed by the DNIe root",
         ));
@@ -379,7 +378,8 @@ fn send(
 mod tests {
     use crate::{
         Error, Session,
-        emulator::EmulatedDnie,
+        emulator::{EmulatedDnie, component_root_public_key, foreign_root_public_key},
+        key_sets::ComponentRoots,
         session::tests::{card_with_channel, open},
     };
 
@@ -424,6 +424,23 @@ mod tests {
     fn refuses_a_ca_certificate_the_root_did_not_sign() {
         refuses_before_authenticating(
             open(card_with_channel().with_untrusted_intermediate_certificate()),
+            NOT_FROM_THE_ROOT,
+        );
+    }
+
+    #[test]
+    fn accepts_a_ca_certificate_the_second_root_signed_whatever_its_issuer() {
+        let roots = ComponentRoots::pair(component_root_public_key(), foreign_root_public_key());
+        let card = card_with_channel().with_untrusted_intermediate_certificate();
+        let mut session = Session::open_with_roots(card, roots).unwrap();
+        assert!(session.pin_retries().is_ok());
+    }
+
+    #[test]
+    fn refuses_a_ca_certificate_neither_root_signed() {
+        let roots = ComponentRoots::pair(foreign_root_public_key(), foreign_root_public_key());
+        refuses_before_authenticating(
+            Session::open_with_roots(card_with_channel(), roots).unwrap(),
             NOT_FROM_THE_ROOT,
         );
     }
