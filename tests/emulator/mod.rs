@@ -12,6 +12,7 @@ use rdnie::{Error, Transport};
 use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 
 use channel::CardChannel;
+pub use channel::ResponseShape;
 use chip::Chip;
 pub use chip::{Handshake, TerminalKey, component_root_public_key, foreign_root_public_key};
 pub use pkcs15::HolderCertificate;
@@ -86,6 +87,7 @@ pub struct EmulatedDnie {
     handshake_fault: Option<HandshakeFault>,
     unauthenticated_read: Option<u16>,
     endless: Option<Endless>,
+    response_shape: ResponseShape,
 }
 
 /// A request to try again the card repeats to every protected command it targets.
@@ -186,6 +188,7 @@ impl EmulatedDnie {
             handshake_fault: None,
             unauthenticated_read: None,
             endless: None,
+            response_shape: ResponseShape::Standard,
         }
     }
 
@@ -327,6 +330,12 @@ impl EmulatedDnie {
     /// Answers `6Cxx` inside the channel to every `VERIFY` carrying a PIN, without checking it.
     pub fn asking_a_wrong_length_forever_on_the_pin(mut self) -> Self {
         self.endless = Some(Endless::WrongLengthOnPin);
+        self
+    }
+
+    /// Lays out every protected response as `shape`.
+    pub fn shaping_responses(mut self, shape: ResponseShape) -> Self {
+        self.response_shape = shape;
         self
     }
 
@@ -482,7 +491,7 @@ impl EmulatedDnie {
             self.delivery = delivery;
             answer
         };
-        let mut response = channel.wrap(&answer);
+        let mut response = channel.wrap(&answer, self.response_shape);
         if inner.ins == READ_BINARY
             && let Some(status) = self.unauthenticated_read.take()
         {
