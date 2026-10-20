@@ -145,7 +145,7 @@ fn follow<T: Transport + ?Sized>(
 
 const RESPONSE_PENDING: u8 = 0x61;
 const MAX_GET_RESPONSES: usize = 256;
-const MAX_RESENDS: usize = 2;
+pub(crate) const MAX_RESENDS: usize = 2;
 pub(crate) const WRONG_LENGTH: u8 = 0x6C;
 // Protected commands are resent by the secure channel, not here.
 const PLAIN_CLA: u8 = 0x00;

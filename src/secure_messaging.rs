@@ -1,5 +1,6 @@
-//! CWA-14890 secure messaging of DNIe 3.0/4.0: session keys, command protection and response
-//! unprotection, which decodes responses as JMulticard's `ApduEncrypterDes.decryptResponseApdu`.
+//! CWA-14890 secure messaging of DNIe 3.0/4.0: session keys, command protection, response
+//! unprotection as JMulticard's `ApduEncrypterDes.decryptResponseApdu`, and `6Cxx` resends,
+//! at most 2 in a row.
 
 // Derived from JMulticard (https://github.com/ctt-gob-es/jmulticard, commit 4ec9494):
 // - es.gob.jmulticard.connection.AbstractApduEncrypter (Tomás García-Merás)
@@ -63,7 +64,7 @@ use zeroize::Zeroize;
 
 use crate::{
     Command, Error, Response, StatusWord, Transport,
-    transport::{WRONG_LENGTH, short_le},
+    transport::{MAX_RESENDS, WRONG_LENGTH, short_le},
 };
 
 const BLOCK: usize = 8;
@@ -136,25 +137,47 @@ impl SecureMessaging {
         })
     }
 
-    /// Sends a command through the channel and returns the card's plain answer.
+    /// Sends a command through the channel and returns the card's plain answer, resending it with
+    /// the Le of a `6Cxx` at most 2 times in a row; past that, [`Error::Status`] with the last one.
     pub(crate) fn transmit<T: Transport + ?Sized>(
         &mut self,
         transport: &mut T,
         command: &Command,
     ) -> Result<Response, Error> {
-        let protected = self.protect(command)?;
-        let response = self.unprotect(&transport.transmit(&protected)?)?;
-        match response.status.0.to_be_bytes() {
-            [WRONG_LENGTH, le] => {
-                let mut resent = Command {
-                    le: Some(short_le(le)),
-                    ..command.clone()
-                };
-                let response = self.transmit(transport, &resent);
-                resent.data.zeroize();
-                response
+        let mut resent = None;
+        let result = self.follow(transport, command, &mut resent);
+        if let Some(mut copy) = resent {
+            copy.data.zeroize();
+        }
+        result
+    }
+
+    /// Keeps the latest resent copy in `resent`, so the caller wipes it on every exit.
+    fn follow<T: Transport + ?Sized>(
+        &mut self,
+        transport: &mut T,
+        command: &Command,
+        resent: &mut Option<Command>,
+    ) -> Result<Response, Error> {
+        let mut resends = 0;
+        loop {
+            let sent = resent.as_ref().unwrap_or(command);
+            let protected = self.protect(sent)?;
+            let response = self.unprotect(&transport.transmit(&protected)?)?;
+            let [WRONG_LENGTH, le] = response.status.0.to_be_bytes() else {
+                return Ok(response);
+            };
+            if resends == MAX_RESENDS {
+                return Err(Error::Status(response.status));
             }
-            _ => Ok(response),
+            resends += 1;
+            let next = Command {
+                le: Some(short_le(le)),
+                ..sent.clone()
+            };
+            if let Some(mut old) = resent.replace(next) {
+                old.data.zeroize();
+            }
         }
     }
 
