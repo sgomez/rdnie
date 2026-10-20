@@ -82,37 +82,70 @@ pub trait Transport {
 
     /// Sends a command, completing `61xx` with `GET RESPONSE` and resending a plain command on `6Cxx`.
     ///
+    /// A command gets at most 256 `GET RESPONSE` and at most 2 consecutive `6Cxx` resends.
+    ///
     /// # Errors
     ///
-    /// Those of [`Transport::transmit_raw`], [`Command::to_bytes`] and [`Response::parse`].
+    /// Those of [`Transport::transmit_raw`], [`Command::to_bytes`] and [`Response::parse`], and
+    /// [`Error::Status`] with the last status word if the card keeps asking past a bound.
     fn transmit(&mut self, command: &Command) -> Result<Response, Error> {
-        let response = Response::parse(&self.transmit_raw(&command.to_bytes()?)?)?;
+        let mut resent = None;
+        let result = follow(self, command, &mut resent);
+        if let Some(mut copy) = resent {
+            copy.data.zeroize();
+        }
+        result
+    }
+}
+
+/// Keeps the latest resent copy in `resent`, so the caller wipes it on every exit.
+fn follow<T: Transport + ?Sized>(
+    transport: &mut T,
+    command: &Command,
+    resent: &mut Option<Command>,
+) -> Result<Response, Error> {
+    let mut data = Vec::new();
+    let mut get_responses = 0;
+    let mut resends = 0;
+    loop {
+        let sent = resent.as_ref().unwrap_or(command);
+        let response = Response::parse(&transport.transmit_raw(&sent.to_bytes()?)?)?;
         let [sw1, sw2] = response.status.0.to_be_bytes();
-        match sw1 {
-            RESPONSE_PENDING => {
-                let rest = self.transmit(&get_response(sw2))?;
-                let mut data = response.data;
-                data.extend(rest.data);
-                Ok(Response {
-                    data,
-                    status: rest.status,
-                })
+        if sw1 == WRONG_LENGTH && sent.cla == PLAIN_CLA {
+            if resends == MAX_RESENDS {
+                return Err(Error::Status(response.status));
             }
-            WRONG_LENGTH if command.cla == PLAIN_CLA => {
-                let mut resent = Command {
-                    le: Some(short_le(sw2)),
-                    ..command.clone()
-                };
-                let response = self.transmit(&resent);
-                resent.data.zeroize();
-                response
+            resends += 1;
+            let next = Command {
+                le: Some(short_le(sw2)),
+                ..sent.clone()
+            };
+            if let Some(mut old) = resent.replace(next) {
+                old.data.zeroize();
             }
-            _ => Ok(response),
+            continue;
+        }
+        resends = 0;
+        data.extend(response.data);
+        if sw1 != RESPONSE_PENDING {
+            return Ok(Response {
+                data,
+                status: response.status,
+            });
+        }
+        if get_responses == MAX_GET_RESPONSES {
+            return Err(Error::Status(response.status));
+        }
+        get_responses += 1;
+        if let Some(mut old) = resent.replace(get_response(sw2)) {
+            old.data.zeroize();
         }
     }
 }
 
 const RESPONSE_PENDING: u8 = 0x61;
+const MAX_GET_RESPONSES: usize = 256;
+const MAX_RESENDS: usize = 2;
 pub(crate) const WRONG_LENGTH: u8 = 0x6C;
 // Protected commands are resent by the secure channel, not here.
 const PLAIN_CLA: u8 = 0x00;
