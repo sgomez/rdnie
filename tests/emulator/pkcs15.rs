@@ -44,6 +44,7 @@ pub struct HolderCertificate {
     compressed: bool,
     trailing: usize,
     cdf_path: Option<Vec<u8>>,
+    cdf_label: Option<Vec<u8>>,
 }
 
 impl HolderCertificate {
@@ -88,7 +89,26 @@ impl HolderCertificate {
             compressed: false,
             trailing: 0,
             cdf_path: None,
+            cdf_label: Some(format!("Cert{id}").into_bytes()),
         }
+    }
+
+    /// Stores `label` as the CDF label.
+    pub fn labelled(mut self, label: &str) -> Self {
+        self.cdf_label = Some(label.as_bytes().to_vec());
+        self
+    }
+
+    /// Stores `label` as the CDF label, whether or not it is UTF-8.
+    pub fn labelled_bytes(mut self, label: &[u8]) -> Self {
+        self.cdf_label = Some(label.to_vec());
+        self
+    }
+
+    /// Leaves the label out of the CDF object.
+    pub fn without_label(mut self) -> Self {
+        self.cdf_label = None;
+        self
     }
 
     pub fn compressed(mut self) -> Self {
@@ -140,7 +160,13 @@ pub fn cdf(certificates: &[HolderCertificate]) -> Vec<u8> {
             .clone()
             .unwrap_or_else(|| [MASTER_FILE, certificate.file].concat());
         sequence(&[
-            sequence(&[certificate.label()]),
+            sequence(
+                &certificate
+                    .cdf_label
+                    .iter()
+                    .map(|l| tlv(0x0C, l))
+                    .collect::<Vec<_>>(),
+            ),
             sequence(&[tlv(OCTET_STRING, &certificate.pkcs15_id())]),
             tlv(0xA1, &sequence(&[sequence(&[tlv(OCTET_STRING, &path)])])),
         ])
