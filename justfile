@@ -1,5 +1,8 @@
 export PATH := env_var_or_default('HOME', '') / ".cargo/bin:" + env_var('PATH')
 
+_default:
+    @just --list
+
 # What the CI runs.
 check: fmt-check lint test
 
