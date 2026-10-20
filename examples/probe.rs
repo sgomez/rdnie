@@ -2,9 +2,7 @@
 
 use std::fmt::Write as _;
 
-use rdnie::{
-    Certificate, Error, HashAlgorithm, KeyGeneration, PcscTransport, Pin, Session, Transport,
-};
+use rdnie::{Certificate, Error, HashAlgorithm, KeyGeneration, PcscTransport, Pin, Session};
 use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
 use sha2_010::{Digest, Sha256};
 use x509_cert::{
@@ -20,8 +18,8 @@ fn main() {
 }
 
 fn run() -> Result<(), Error> {
-    let mut transport = PcscTransport::connect_first_dnie()?;
-    println!("ATR: {}", hex(&transport.reset()?));
+    let transport = PcscTransport::connect_first_dnie()?;
+    println!("ATR: {}", hex(&transport.atr()?));
 
     let mut session = Session::open(transport)?;
     println!("card: DNIe 3.0/4.0");

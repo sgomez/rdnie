@@ -40,8 +40,13 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
+use std::{
+    ffi::CString,
+    ops::{Deref, DerefMut},
+};
+
 use pcsc::{
-    Attribute, Card, Context, Disposition, MAX_BUFFER_SIZE, Protocols, Scope, ShareMode,
+    Attribute, Card, Context, Disposition, MAX_BUFFER_SIZE, Protocol, Protocols, Scope, ShareMode,
     Transaction,
 };
 
@@ -49,7 +54,9 @@ use crate::{Error, Transport, is_dnie};
 
 /// PC/SC transport: `PCSC.framework` on macOS, WinSCard on Windows and pcsc-lite on Linux.
 pub struct PcscTransport {
-    card: Card,
+    context: Context,
+    reader: CString,
+    card: Connection,
 }
 
 impl PcscTransport {
@@ -61,16 +68,72 @@ impl PcscTransport {
     pub fn connect_first_dnie() -> Result<Self, Error> {
         let context = Context::establish(Scope::User).map_err(transport)?;
         let readers = context.list_readers_owned().map_err(transport)?;
-        readers
-            .iter()
-            .filter_map(|reader| {
-                context
-                    .connect(reader, ShareMode::Shared, Protocols::ANY)
-                    .ok()
-            })
-            .find(|card| atr(card).is_ok_and(|atr| is_dnie(&atr)))
-            .map(|card| Self { card })
-            .ok_or(Error::NoDnie)
+        let mut failure = None;
+        for reader in readers {
+            let attempt = context
+                .connect(&reader, ShareMode::Shared, Protocols::ANY)
+                .map(|card| Connection(Some(card)))
+                .and_then(|card| pcsc_atr(&card).map(|atr| (card, atr)));
+            match attempt {
+                Ok((card, atr)) if is_dnie(&atr) => {
+                    return Ok(Self {
+                        context,
+                        reader,
+                        card,
+                    });
+                }
+                Ok(_) | Err(pcsc::Error::NoSmartcard | pcsc::Error::RemovedCard) => {}
+                Err(error) => failure = failure.or(Some(error)),
+            }
+        }
+        Err(failure.map_or(Error::NoDnie, transport))
+    }
+
+    /// The card's current ATR.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Transport`] if PC/SC cannot read it.
+    pub fn atr(&self) -> Result<Vec<u8>, Error> {
+        atr(&self.card)
+    }
+}
+
+/// Card handle that disconnects with `LeaveCard`, as `SmartcardIoConnection.close` does.
+struct Connection(Option<Card>);
+
+impl Connection {
+    fn disconnect(&mut self, disposition: Disposition) {
+        if let Some(card) = self.0.take() {
+            if let Err((card, _)) = card.disconnect(disposition) {
+                // Dropping it would disconnect with ResetCard.
+                std::mem::forget(card);
+            }
+        }
+    }
+}
+
+impl Deref for Connection {
+    type Target = Card;
+
+    fn deref(&self) -> &Card {
+        self.0
+            .as_ref()
+            .expect("the card is only taken on disconnect")
+    }
+}
+
+impl DerefMut for Connection {
+    fn deref_mut(&mut self) -> &mut Card {
+        self.0
+            .as_mut()
+            .expect("the card is only taken on disconnect")
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.disconnect(Disposition::LeaveCard);
     }
 }
 
@@ -79,10 +142,15 @@ impl Transport for PcscTransport {
         transmit(&self.card, apdu)
     }
 
+    /// Disconnects with `ResetCard` and reconnects with the negotiated protocol, as `SmartcardIoConnection.reset` does.
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        self.card
-            .reconnect(ShareMode::Shared, Protocols::ANY, Disposition::ResetCard)
+        let protocol = negotiated(&self.card);
+        self.card.disconnect(Disposition::ResetCard);
+        let card = self
+            .context
+            .connect(&self.reader, ShareMode::Shared, protocol)
             .map_err(transport)?;
+        self.card = Connection(Some(card));
         atr(&self.card)
     }
 
@@ -100,7 +168,19 @@ impl Transport for PcscTransport {
     }
 }
 
-/// The body's own error wins: a reset card also fails to end its transaction, which would hide it.
+fn negotiated(card: &Card) -> Protocols {
+    match card
+        .status2_owned()
+        .ok()
+        .and_then(|status| status.protocol2())
+    {
+        Some(Protocol::T0) => Protocols::T0,
+        Some(Protocol::T1) => Protocols::T1,
+        Some(Protocol::RAW) => Protocols::RAW,
+        None => Protocols::ANY,
+    }
+}
+
 fn outcome<R>(result: Result<R, Error>, ended: Result<(), Error>) -> Result<R, Error> {
     let value = result?;
     ended.map(|()| value)
@@ -115,10 +195,9 @@ impl Transport for InTransaction<'_> {
     }
 
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        self.0
-            .reconnect(ShareMode::Shared, Protocols::ANY, Disposition::ResetCard)
-            .map_err(transport)?;
-        atr(&self.0)
+        Err(Error::Transport(
+            "cannot reset the card inside a transaction".into(),
+        ))
     }
 
     fn transaction<R>(
@@ -136,8 +215,11 @@ fn transmit(card: &Card, apdu: &[u8]) -> Result<Vec<u8>, Error> {
 }
 
 fn atr(card: &Card) -> Result<Vec<u8>, Error> {
+    pcsc_atr(card).map_err(transport)
+}
+
+fn pcsc_atr(card: &Card) -> Result<Vec<u8>, pcsc::Error> {
     card.get_attribute_owned(Attribute::AtrString)
-        .map_err(transport)
 }
 
 #[allow(clippy::needless_pass_by_value)]

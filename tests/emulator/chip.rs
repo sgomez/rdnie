@@ -59,23 +59,20 @@ impl TerminalKey {
 pub struct Handshake {
     pub rnd_ifd: Vec<u8>,
     pub kifd: Vec<u8>,
+    /// Whether it arrived protected by an open channel.
+    pub inside_channel: bool,
 }
 
 struct Pki {
-    ca: RsaPublicKey,
     icc: RsaPrivateKey,
     component_certificate: Vec<u8>,
-    foreign_component_certificate: Vec<u8>,
 }
 
 static PKI: LazyLock<Pki> = LazyLock::new(|| {
     let ca = RsaPrivateKey::new(&mut OsRng, KEY_LENGTH * 8).unwrap();
-    let other_ca = RsaPrivateKey::new(&mut OsRng, KEY_LENGTH * 8).unwrap();
     let icc = RsaPrivateKey::new(&mut OsRng, KEY_LENGTH * 8).unwrap();
     Pki {
-        ca: ca.to_public_key(),
         component_certificate: issue(&ca, &icc.to_public_key()),
-        foreign_component_certificate: issue(&other_ca, &icc.to_public_key()),
         icc,
     }
 });
@@ -106,16 +103,6 @@ fn issue(ca: &RsaPrivateKey, icc: &RsaPublicKey) -> Vec<u8> {
 /// The X.509 component certificate the card stores at `3F00/601F`, signed by the test CA.
 pub fn component_certificate() -> Vec<u8> {
     PKI.component_certificate.clone()
-}
-
-/// A component certificate for the same ICC key, signed by a CA the driver does not trust.
-pub fn foreign_component_certificate() -> Vec<u8> {
-    PKI.foreign_component_certificate.clone()
-}
-
-/// The public key of the test CA that signs the component certificate.
-pub fn ca_public_key() -> RsaPublicKey {
-    PKI.ca.clone()
 }
 
 /// Handshake state between the commands of one mutual authentication.
@@ -234,6 +221,7 @@ impl Chip {
         self.handshakes.push(Handshake {
             rnd_ifd: rnd_ifd.to_vec(),
             kifd: kifd.to_vec(),
+            inside_channel: false,
         });
         let kifd: [u8; SEED_LENGTH] = kifd.try_into().unwrap();
         Some(CardChannel::derive(&self.kicc, &kifd, rnd_icc, rnd_ifd))

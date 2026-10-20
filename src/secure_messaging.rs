@@ -225,6 +225,37 @@ impl SecureMessaging {
     }
 }
 
+/// A transport whose commands all travel through `channel`, as a channel opened inside another.
+pub(crate) struct Protected<'a> {
+    pub(crate) channel: &'a mut SecureMessaging,
+    pub(crate) card: &'a mut dyn Transport,
+}
+
+impl Transport for Protected<'_> {
+    fn transmit_raw(&mut self, _apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        Err(Error::Transport(
+            "raw apdus cannot cross a secure channel".into(),
+        ))
+    }
+
+    fn reset(&mut self) -> Result<Vec<u8>, Error> {
+        Err(Error::Transport(
+            "a secure channel cannot reset the card".into(),
+        ))
+    }
+
+    fn transaction<R>(
+        &mut self,
+        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+    ) -> Result<R, Error> {
+        body(self)
+    }
+
+    fn transmit(&mut self, command: &Command) -> Result<Response, Error> {
+        self.channel.transmit(self.card, command)
+    }
+}
+
 fn retail_mac(key: &[u8; 16]) -> RetailMac<Des> {
     RetailMac::<Des>::new(&(*key).into())
 }

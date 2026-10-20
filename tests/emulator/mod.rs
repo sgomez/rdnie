@@ -13,7 +13,7 @@ use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 
 use channel::CardChannel;
 use chip::Chip;
-pub use chip::{Handshake, TerminalKey, ca_public_key};
+pub use chip::{Handshake, TerminalKey};
 pub use pkcs15::HolderCertificate;
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
@@ -74,7 +74,7 @@ pub struct EmulatedDnie {
     transactions: usize,
     commands: usize,
     pin_queries: Vec<PinQuery>,
-    retry_lost_on_reset: bool,
+    retry_lost_between_transactions: bool,
     fault: Option<Fault>,
 }
 
@@ -129,7 +129,7 @@ impl EmulatedDnie {
             transactions: 0,
             commands: 0,
             pin_queries: Vec::new(),
-            retry_lost_on_reset: false,
+            retry_lost_between_transactions: false,
             fault: None,
         }
     }
@@ -139,11 +139,6 @@ impl EmulatedDnie {
         let mut card = self.with_file(&[ICC_CERTIFICATE], chip::component_certificate());
         card.chip = Some(Chip::new(terminals));
         card
-    }
-
-    /// Stores a component certificate that the test CA did not sign.
-    pub fn with_untrusted_component_certificate(self) -> Self {
-        self.with_file(&[ICC_CERTIFICATE], chip::foreign_component_certificate())
     }
 
     /// How many INTERNAL AUTHENTICATE commands the card received.
@@ -177,10 +172,10 @@ impl EmulatedDnie {
         self
     }
 
-    /// Burns one PIN attempt at the first reset after the retries were read, as another process
+    /// Burns one PIN attempt between transactions once the retries were read, as another process
     /// trying a PIN between the two phases would.
     pub fn losing_a_retry_between_phases(mut self) -> Self {
-        self.retry_lost_on_reset = true;
+        self.retry_lost_between_transactions = true;
         self
     }
 
@@ -305,12 +300,8 @@ impl EmulatedDnie {
     }
 
     fn answer_protected(&mut self, apdu: &[u8]) -> Vec<u8> {
-        let channel = self
-            .channel
-            .as_mut()
-            .expect("protected only with a channel");
+        let mut channel = self.channel.take().expect("protected only with a channel");
         let Some(inner) = channel.unwrap(apdu) else {
-            self.channel = None;
             return vec![0x66, 0x88];
         };
         let answer = if inner.ins == VERIFY {
@@ -339,10 +330,19 @@ impl EmulatedDnie {
             self.delivery = delivery;
             answer
         };
-        self.channel
-            .as_mut()
-            .expect("the channel survives its own commands")
-            .wrap(&answer)
+        let response = channel.wrap(&answer);
+        match self.channel {
+            Some(_) => self.mark_last_handshake_inside_channel(),
+            None => self.channel = Some(channel),
+        }
+        response
+    }
+
+    /// A channel negotiated inside another replaces it once its last answer is wrapped.
+    fn mark_last_handshake_inside_channel(&mut self) {
+        if let Some(handshake) = self.chip_mut().handshakes.last_mut() {
+            handshake.inside_channel = true;
+        }
     }
 
     fn verify_pin(&mut self, pin: &[u8]) -> u16 {
@@ -518,10 +518,6 @@ impl Transport for EmulatedDnie {
         self.user_channel = false;
         self.pin_verified = false;
         self.signing_key = None;
-        if self.retry_lost_on_reset && !self.pin_queries.is_empty() {
-            self.retry_lost_on_reset = false;
-            self.retries = self.retries.saturating_sub(1);
-        }
         if let Some(chip) = &mut self.chip {
             chip.reset();
         }
@@ -533,6 +529,10 @@ impl Transport for EmulatedDnie {
         body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
     ) -> Result<R, Error> {
         self.transactions += 1;
+        if self.retry_lost_between_transactions && !self.pin_queries.is_empty() {
+            self.retry_lost_between_transactions = false;
+            self.retries = self.retries.saturating_sub(1);
+        }
         body(self)
     }
 }
