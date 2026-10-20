@@ -36,6 +36,9 @@ pub enum Error {
     /// A PKCS#15 directory, or a certificate it lists, cannot be decoded.
     #[error("malformed PKCS#15 directory")]
     MalformedPkcs15,
+    /// The bytes are not an X.509 certificate.
+    #[error("not an X.509 certificate")]
+    MalformedCertificate,
     /// The PIN is blocked: no attempt is left.
     #[error("the PIN is blocked")]
     PinBlocked,
