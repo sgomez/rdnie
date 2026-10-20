@@ -65,6 +65,7 @@ Key derivation: `K = Kicc ⊕ Kifd`; `Kenc = SHA-1(K ‖ 00000001)[0..16]`; `Kma
 - ICAO/LDS: `Dnie3.checkSecurityObjects`, DG1–DG16, SOD, COM, `MrtdLds1`.
 - Other cards: `CeresSc*`, `Tif`, GiDe, Ceres APDUs, and every card outside `card/dnie`.
 - DNIe 1.0/2.0 (`Dnie` + V1 channel with 4-byte MAC and the `DnieCwa14890Constants` key set). They need the PIN even to read certificates. Adding them later is cheap (same code, MAC length 4, one more key set), but I would leave them out until someone asks.
+- `Cwa14890OneV1Connection.reset` (reset the card and reopen the channel): the channel connection is only reachable inside the card class (`getConnection` is protected), and no DNIe code resets it.
 - `changePIN`, `cipherData` (`LOAD DATA` + `SIGN DATA`), the `90 C2` envelope for APDUs over 255 bytes (no command in this flow exceeds it), the JCA provider, Android and JSR-268 plumbing.
 
 ## 2. Embedded keys and certificates
@@ -133,7 +134,7 @@ The comparison is a plain lexicographic `String.compareTo`. Distinct material to
 
 All of these are run by hand by the card's holder, and logs carry status words only:
 
-- FCI layout (`SelectFileApduResponse` reads lengths from tags `81` or `85`; it is brittle).
+- FCI layout (`SelectFileApduResponse` reads lengths from tags `81` or `85`; it is brittle). rdnie keeps JMulticard's parsing; the probe passed on the SLE78 chip, and a DNIe 4.0 or the 19WL34 chip is still unchecked.
 - r1/r2 key selection on 3.0 and 4.0.
 - Behaviour of `GET RESPONSE` with a 2048-bit signature over SM.
 - The PIN state surviving the switch to the user channel.

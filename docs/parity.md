@@ -12,21 +12,20 @@ The protocol is at parity: ATR classification, IDESP → key set, the CWA-14890 
 
 Ordered by importance.
 
-1. **The intermediate CA certificate is discarded.** Java hides keyless CDF certificates from `getAliases` but keeps them reachable by alias; the JSE provider uses `CertCAIntermediaDGP` to build the signing chain (Dnie.java:942, `jmulticard-jse` DnieKeyStoreImpl.java:80). rdnie reads it and drops it (`certificates.rs` `load`), so a consumer cannot embed the chain.
-2. **No certificate label or role.** `CertificateObject.getAlias` (CertificateObject.java:150) and `Dnie.getAliases` (Dnie.java:429) tell the authentication certificate from the signing one. rdnie exposes neither; callers parse X.509 KeyUsage (`examples/probe.rs`).
-3. **Coarse error taxonomy.** "No reader", "no card" and "card removed" surface as `Error::Transport(String)` or `Error::NoDnie`, indistinguishable from "card is not a DNIe". Java has `NoReadersFoundException`, `CardNotPresentException` and `InvalidCardException` (SIC:280, :298; DnieFactory.java:312). `Error` is not `#[non_exhaustive]` (`error.rs`), so adding variants later is a breaking change.
-4. **`PcscTransport::reset` can panic afterwards.** It disconnects (leaving `Connection(None)`) and returns early if the reconnect fails; the next `transmit_raw`, `atr`, `transaction` or `reset` panics in `Deref::expect`. Java throws `ApduConnectionException` (SIC:322-340). Reachable only when a consumer calls `Transport::reset` directly.
-5. **No reader listing or selection, and no recovery after removal.** Java has `getTerminals`, `getTerminalInfo`, `setTerminal` (SIC:165, :231, :372); rdnie always takes the first reader with a DNIe ATR. After `RemovedCard` the transport stays dead (it only reconnects on `CardReset`), which is undocumented.
-6. **Response parsing is stricter than Java's.** rdnie rejects bytes after `8E`, a `99` value that is not 2 bytes, and an `87` cryptogram not starting with `01` (`secure_messaging.rs` `unprotect`, `decrypt`); `ApduEncrypterDes.decryptResponseApdu` accepts them. Confirm with the manual real-card probe that a DNIe 3.0/4.0 never sends them.
-7. **Unbounded `61xx`/`6Cxx` loops**, on both sides (`transport.rs` `transmit`, `secure_messaging.rs` resend; AbstractApduConnectionIso7816.java:107-132, V1:755-758). A card or reader that keeps answering them recurses until the stack overflows. A retry cap is cheap.
-8. **FCI layouts other than `81`/`85` read as length 0**, on both sides (`files.rs` `file_length`, SelectFileApduResponse.java:66): a certificate would read empty and fail, and the IDESP would silently become `None` (r2 keys). Confirm the FCI layout on a DNIe 4.0. Related and latent on both sides: READ BINARY advances by `0xDE` even after a short read, and offsets ≥ `0x8000` are not guarded.
-9. **Certificates are not cached.** Java loads them once (Dnie.java:847); every `Session::certificates` call re-reads CDF, certificates and PrKDF. Latency only.
+1. **The intermediate CA certificate is discarded** (spec #34). Java hides keyless CDF certificates from `getAliases` but keeps them reachable by alias; the JSE provider uses `CertCAIntermediaDGP` to build the signing chain (Dnie.java:942, `jmulticard-jse` DnieKeyStoreImpl.java:80). rdnie reads it and drops it (`certificates.rs` `load`), so a consumer cannot embed the chain.
+2. **No certificate label or role** (spec #34). `CertificateObject.getAlias` (CertificateObject.java:150) and `Dnie.getAliases` (Dnie.java:429) tell the authentication certificate from the signing one. rdnie exposes neither; callers parse X.509 KeyUsage (`examples/probe.rs`).
+3. **Coarse error taxonomy** (spec #35). "No reader", "no card" and "card removed" surface as `Error::Transport(String)` or `Error::NoDnie`, indistinguishable from "card is not a DNIe". Java has `NoReadersFoundException`, `CardNotPresentException` and `InvalidCardException` (SIC:280, :298; DnieFactory.java:312). `Error` is not `#[non_exhaustive]` (`error.rs`), so adding variants later is a breaking change.
+4. **`PcscTransport::reset` can panic afterwards** (spec #35). It disconnects (leaving `Connection(None)`) and returns early if the reconnect fails; the next `transmit_raw`, `atr`, `transaction` or `reset` panics in `Deref::expect`. Java throws `ApduConnectionException` (SIC:322-340). Reachable only when a consumer calls `Transport::reset` directly.
+5. **No reader listing or selection, and no recovery after removal** (spec #35). Java has `getTerminals`, `getTerminalInfo`, `setTerminal` (SIC:165, :231, :372); rdnie always takes the first reader with a DNIe ATR. After `RemovedCard` the transport stays dead (it only reconnects on `CardReset`), which is undocumented.
+6. **Response parsing is stricter than Java's** (spec #36). rdnie rejects bytes after `8E`, a `99` value that is not 2 bytes, and an `87` cryptogram not starting with `01` (`secure_messaging.rs` `unprotect`, `decrypt`); `ApduEncrypterDes.decryptResponseApdu` accepts them. Confirm with the manual real-card probe that a DNIe 3.0/4.0 never sends them.
+7. **Unbounded `61xx`/`6Cxx` loops** (spec #36, intentional difference), on both sides (`transport.rs` `transmit`, `secure_messaging.rs` resend; AbstractApduConnectionIso7816.java:107-132, V1:755-758). A card or reader that keeps answering them recurses until the stack overflows.
+8. **FCI layouts other than `81`/`85` read as length 0**, on both sides (`files.rs` `file_length`, SelectFileApduResponse.java:66): a certificate would read empty and fail, and the IDESP would silently become `None` (r2 keys). Confirm the FCI layout on a DNIe 4.0. Related and latent on both sides: READ BINARY advances by `0xDE` even after a short read, and offsets ≥ `0x8000` are not guarded. Kept as JMulticard: the real-card probe (#9) passed on a DNIe with the SLE78 chip; revisit only if the probe fails on a DNIe 4.0 or the 19WL34 chip.
+9. **Certificates are not cached** (spec #34). Java loads them once (Dnie.java:847); every `Session::certificates` call re-reads CDF, certificates and PrKDF. Latency only.
 10. **Minor:**
-    - `StatusWord` displays hex only; `StandardErrorCodes` gives text (StandardErrorCodes.java:17-50).
-    - `DnieAtr.toString` (chip, OS version, lifecycle) is not ported; diagnostics only.
-    - rdnie accepts 8–16 printable ASCII PIN characters (`pin.rs` `check_format`); Java sends any `char` as its low byte. Correct for DNIe PIN rules, but worth a line in the docs.
-    - `DnieCertParseUtil` (holder name and number from the subject) is not ported and has no caller in the core; add it to "Left out".
-    - `Cwa14890OneV1Connection.reset` (reset and transparently reopen the channel) is not ported; nothing in the DNIe 3 flow calls it.
+    - `StatusWord` displays hex only; `StandardErrorCodes` gives text (StandardErrorCodes.java:17-50). Spec #35.
+    - `DnieAtr.toString` (chip, OS version, lifecycle) is not ported. Spec #35.
+    - rdnie accepts only 8–16 printable ASCII PIN characters (`pin.rs` `check_format`); Java sends any `char` as its low byte. Spec #37.
+    - `DnieCertParseUtil` (holder name and number from the subject) is not ported. Spec #34.
 
 ## Intentional divergences
 
@@ -79,7 +78,7 @@ All "Left out" items hold for a signing driver: PACE/NFC (including the in-chann
 | V1.transmit inner `6Cxx` resend | `secure_messaging.rs` `transmit` | Impl | Unbounded on both sides; gap 7. |
 | V1.transmit inner `62xx` → Le−1 | — | Out of scope | PACE. |
 | V1.close | `SecureMessaging` `Drop` | Diff | Drops and zeroizes the keys; the handle stays with `Session`. |
-| V1.reset (V1:773-784) | `Protected::reset` → error | Missing | Gap 10. |
+| V1.reset (V1:773-784) | `Protected::reset` → error | Out of scope | Unreachable: only the card class holds the channel connection, and it never resets it. Listed in "Left out". |
 | Dnie3.openPinChannel (Dnie3.java:213) | `pin.rs` `open_pin_channel` | Impl | MF select failure ignored only for status errors. |
 | Dnie3.openUserChannel (Dnie3.java:249) | `pin.rs` `open_user_channel`, `Protected` | Impl | User channel nested in the PIN channel. |
 | Dnie.isSecurityChannelOpen / openSecureChannelIfNotAlreadyOpened | `session.rs` `operation` | Intentional | Fresh channels per operation. |
