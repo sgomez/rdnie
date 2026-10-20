@@ -2,6 +2,7 @@
 // - es.gob.jmulticard.card.dnie.Dnie (Tomás García-Merás)
 // - es.gob.jmulticard.card.CompressionUtils (Tomás García-Merás)
 // - es.gob.jmulticard.card.dnie.DniePrivateKeyReference (Tomás García-Merás)
+// - es.gob.jmulticard.jse.provider.DnieKeyStoreImpl (Tomás García-Merás)
 // rdnie takes the EUPL 1.1+ branch of the dual licence below.
 //
 // Controlador Java de la Secretaria de Estado de Administraciones Publicas
@@ -59,6 +60,9 @@ const CDF: &[u8] = &[0x50, 0x15, 0x60, 0x04];
 const PRKDF: &[u8] = &[0x50, 0x15, 0x60, 0x01];
 /// Bytes before the zlib stream of a compressed certificate.
 const COMPRESSION_HEADER: usize = 8;
+
+/// Label of the DNIe intermediate CA certificate, which has no key on the card.
+pub const INTERMEDIATE_CA_LABEL: &str = "CertCAIntermediaDGP";
 
 /// Certificate of the holder, paired with its private key on the card.
 pub struct Certificate {
