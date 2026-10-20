@@ -60,6 +60,8 @@ const CDF: &[u8] = &[0x50, 0x15, 0x60, 0x04];
 const PRKDF: &[u8] = &[0x50, 0x15, 0x60, 0x01];
 /// Bytes before the zlib stream of a compressed certificate.
 const COMPRESSION_HEADER: usize = 8;
+/// Bytes a stored certificate may inflate to, well above any certificate the card holds.
+const MAX_INFLATED: u64 = 16 * 1024;
 
 /// Label of the DNIe intermediate CA certificate, which has no key on the card.
 pub const INTERMEDIATE_CA_LABEL: &str = "CertCAIntermediaDGP";
@@ -167,6 +169,9 @@ fn inflate(stored: &[u8]) -> Option<Vec<u8>> {
         let status = inflater
             .decompress_vec(&stream[consumed..], &mut der, FlushDecompress::None)
             .ok()?;
+        if inflater.total_out() > MAX_INFLATED {
+            return None;
+        }
         if status == Status::StreamEnd {
             return Some(der);
         }
