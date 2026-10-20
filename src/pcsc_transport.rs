@@ -80,6 +80,43 @@ impl PcscTransport {
         })
     }
 
+    /// Lists the names of the system's readers, in system order.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Transport`] if PC/SC fails. No readers is an empty list.
+    pub fn readers() -> Result<Vec<String>, Error> {
+        let context = Context::establish(Scope::User).map_err(connecting)?;
+        reader_names(context.list_readers_owned())
+    }
+
+    /// Connects in shared mode to the named reader, without checking the ATR.
+    ///
+    /// The session classifies the card when it opens.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoReader`] if the system has no reader of that name, [`Error::NoCard`] if the
+    /// reader is empty, and otherwise [`Error::Transport`].
+    pub fn connect(reader: &str) -> Result<Self, Error> {
+        let reader = reader_cstring(reader)?;
+        let context = Context::establish(Scope::User).map_err(connecting)?;
+        let card = context
+            .connect(&reader, ShareMode::Shared, Protocols::ANY)
+            .map_err(connecting)?;
+        Ok(Self {
+            context,
+            reader,
+            card: Connection(Ok(card)),
+        })
+    }
+
+    /// The name of the reader this transport is connected to.
+    #[must_use]
+    pub fn reader(&self) -> String {
+        self.reader.to_string_lossy().into_owned()
+    }
+
     /// The card's current ATR.
     ///
     /// # Errors
@@ -89,6 +126,21 @@ impl PcscTransport {
     pub fn atr(&self) -> Result<Vec<u8>, Error> {
         atr(self.card.card()?)
     }
+}
+
+fn reader_names(readers: Result<Vec<CString>, pcsc::Error>) -> Result<Vec<String>, Error> {
+    match readers {
+        Ok(readers) => Ok(readers
+            .into_iter()
+            .map(|reader| reader.to_string_lossy().into_owned())
+            .collect()),
+        Err(pcsc::Error::NoReadersAvailable) => Ok(Vec::new()),
+        Err(error) => Err(connecting(error)),
+    }
+}
+
+fn reader_cstring(name: &str) -> Result<CString, Error> {
+    CString::new(name).map_err(|_| Error::NoReader)
 }
 
 /// What connecting to one reader found.
@@ -483,5 +535,43 @@ mod tests {
             connected(pcsc::Error::SharingViolation),
             Error::Transport(_)
         ));
+    }
+
+    #[test]
+    fn listing_gives_names_in_system_order() {
+        let names = reader_names(Ok(vec![c("Reader B 00 00"), c("Reader A 01 00")]));
+        assert_eq!(
+            names.ok(),
+            Some(vec![
+                "Reader B 00 00".to_owned(),
+                "Reader A 01 00".to_owned()
+            ])
+        );
+    }
+
+    #[test]
+    fn listing_without_readers_is_empty_not_an_error() {
+        let names = reader_names(Err(pcsc::Error::NoReadersAvailable));
+        assert_eq!(names.ok(), Some(vec![]));
+        assert_eq!(reader_names(Ok(vec![])).ok(), Some(vec![]));
+    }
+
+    #[test]
+    fn listing_reports_other_failures_as_transport_errors() {
+        let names = reader_names(Err(pcsc::Error::ServiceStopped));
+        assert!(matches!(names, Err(Error::Transport(_))));
+    }
+
+    #[test]
+    fn a_name_with_a_nul_byte_is_an_unknown_reader() {
+        assert!(matches!(reader_cstring("Reader\0A"), Err(Error::NoReader)));
+        assert_eq!(
+            reader_cstring("Reader A 00 00").ok(),
+            Some(c("Reader A 00 00"))
+        );
+    }
+
+    fn c(name: &str) -> CString {
+        CString::new(name).expect("no NUL in a test name")
     }
 }
