@@ -34,7 +34,7 @@ rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit
 sha1 = "0.11"
 sha2 = "0.11"
 thiserror = "2"
-x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+x509-cert = { version = "0.3", default-features = false, features = ["std"] }
 zeroize = "1"
 
 [dev-dependencies]
@@ -42,7 +42,7 @@ rpassword = "7"
 rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit", "sha2"] }
 # The version `rsa` 0.9 verifies with; the crate itself hashes with 0.11.
 sha2_010 = { package = "sha2", version = "0.10" }
-x509-cert = { version = "0.2", default-features = false, features = ["builder"] }
+x509-cert = { version = "0.3", default-features = false, features = ["builder"] }
 
 # The emulator generates RSA keys at test time.
 [profile.dev.package.num-bigint-dig]
