@@ -48,6 +48,11 @@ x509-cert = { version = "0.2", default-features = false, features = ["builder"] 
 [profile.dev.package.num-bigint-dig]
 opt-level = 3
 
+# With debug assertions, pcsc panics on codes outside PC/SC, such as the Win32 0x458 WinSCard
+# returns for a pulled card; without them it reports `UnknownError`. Consumers need it too.
+[profile.dev.package.pcsc]
+debug-assertions = false
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
