@@ -17,8 +17,8 @@ Ordered by importance.
 3. **Coarse error taxonomy** (spec #35): closed. `Error` is `#[non_exhaustive]` and has `NoReader`, `NoCard` and `CardRemoved`; `connect_first_dnie` reports them with `DnieFactory.getDnie`'s precedence (DnieFactory.java:312).
 4. **`PcscTransport::reset` can panic afterwards** (spec #35): closed. A failed reopen keeps its error in the handle, every later call returns it (`NoReader`, `NoCard` or `Transport`) as Java throws `ApduConnectionException` (SIC:322-340), and a later reset can reconnect (`pcsc_transport.rs` `reopen`).
 5. **No reader listing or selection, and no recovery after removal** (spec #35): closed. `PcscTransport::readers`, `connect` and `reader` stand for `getTerminals`, `setTerminal` and `getTerminalInfo` (SIC:165, :372, :231). What is left is intentional and documented on `Transport` and `Error::CardRemoved`: after a removal the transport is spent and there is no automatic recovery; the caller opens a new transport and session.
-6. **Response parsing is stricter than Java's** (spec #36). rdnie rejects bytes after `8E`, a `99` value that is not 2 bytes, and an `87` cryptogram not starting with `01` (`secure_messaging.rs` `unprotect`, `decrypt`); `ApduEncrypterDes.decryptResponseApdu` accepts them. Confirm with the manual real-card probe that a DNIe 3.0/4.0 never sends them.
-7. **Unbounded `61xx`/`6Cxx` loops** (spec #36, intentional difference), on both sides (`transport.rs` `transmit`, `secure_messaging.rs` resend; AbstractApduConnectionIso7816.java:107-132, V1:755-758). A card or reader that keeps answering them recurses until the stack overflows.
+6. **Response parsing is stricter than Java's** (spec #36): closed. `secure_messaging.rs` `unprotect` decodes as `ApduEncrypterDes.decryptResponseApdu`: bytes after `8E` are ignored, a `99` value of 2 bytes or more gives its last 2 as the status word and the rest after the decrypted data, and the first byte of `87` is skipped unchecked. A `99` value under 2 bytes or an empty `87` is a `SecureChannel` error.
+7. **Unbounded `61xx`/`6Cxx` loops** (spec #36, intentional difference): closed. Java recurses on both (AbstractApduConnectionIso7816.java:107-132, V1:755-758); rdnie follows them in a loop, at most 256 `GET RESPONSE` and 2 consecutive `6Cxx` resends per command, plain and inside the channel, and past a bound returns `Error::Status` with the last status word (`transport.rs` `transmit`, `secure_messaging.rs` `transmit`).
 8. **FCI layouts other than `81`/`85` read as length 0**, on both sides (`files.rs` `file_length`, SelectFileApduResponse.java:66): a certificate would read empty and fail, and the IDESP would silently become `None` (r2 keys). Confirm the FCI layout on a DNIe 4.0. Related and latent on both sides: READ BINARY advances by `0xDE` even after a short read, and offsets ≥ `0x8000` are not guarded. Kept as JMulticard: the real-card probe (#9) passed on a DNIe with the SLE78 chip; revisit only if the probe fails on a DNIe 4.0 or the 19WL34 chip.
 9. **Certificates are not cached** (spec #34). Java loads them once (Dnie.java:847); every `Session::certificates` call re-reads CDF, certificates and PrKDF. Latency only.
 10. **Minor:**
@@ -71,11 +71,11 @@ All "Left out" items hold for a signing driver: PACE/NFC (including the in-chann
 | Des.generateMac, 8-byte MAC (Mac8) | `secure_messaging.rs` `authenticator` | Impl | ISO 9797-1 alg. 3. |
 | SSC increments (V1:728, :744) | `secure_messaging.rs` `protect`, `unprotect` | Impl | |
 | Des.decryptResponseApdu, outer SW ≠ 9000 | `secure_messaging.rs` `unprotect` | Impl | |
-| Des.decryptResponseApdu, `[87] 99 8E` parse | `secure_messaging.rs` `unprotect`, `read_tlv` | Diff | Stricter; gap 6. |
+| Des.decryptResponseApdu, `[87] 99 8E` parse | `secure_messaging.rs` `unprotect`, `read_tlv` | Impl | |
 | Des.verifyMac | `secure_messaging.rs` `verify_mac` | Intentional | Constant time. |
 | Abs.removePadding7816 | `secure_messaging.rs` `unpadded_len` | Impl | |
 | V1.transmit `66 88` | `Error::ChannelLost` | Impl | No recovery on either side. |
-| V1.transmit inner `6Cxx` resend | `secure_messaging.rs` `transmit` | Impl | Unbounded on both sides; gap 7. |
+| V1.transmit inner `6Cxx` resend | `secure_messaging.rs` `transmit` | Intentional | Bounded at 2 consecutive resends; gap 7. |
 | V1.transmit inner `62xx` → Le−1 | — | Out of scope | PACE. |
 | V1.close | `SecureMessaging` `Drop` | Diff | Drops and zeroizes the keys; the handle stays with `Session`. |
 | V1.reset (V1:773-784) | `Protected::reset` → error | Out of scope | Unreachable: only the card class holds the channel connection, and it never resets it. Listed in "Left out". |
@@ -144,7 +144,7 @@ All "Left out" items hold for a signing driver: PACE/NFC (including the in-chann
 | CommandApdu.setLe on `6Cxx` | `transport.rs` `transmit` | Diff | rdnie keeps Lc on the resend. |
 | ResponseApdu, StatusWord | `apdu.rs` `Response`, `StatusWord` | Impl | Short responses → `TruncatedResponse`. |
 | StatusWord.toString via StandardErrorCodes | `StatusWord` `Display` | Missing | Gap 10. |
-| `61xx` → GET RESPONSE, `6Cxx` resend for CLA 00 | `transport.rs` `transmit`, `get_response` | Impl | Gap 7. |
+| `61xx` → GET RESPONSE, `6Cxx` resend for CLA 00 | `transport.rs` `transmit`, `get_response` | Intentional | Bounded; gap 7. |
 | EnvelopeDataApduCommand (`90 C2`) | — | Out of scope | |
 | ApduConnection.getTerminals / getTerminalInfo / setTerminal | `PcscTransport::readers`, `reader`, `connect` | Impl | |
 | SIC ignoreVirtualReaders | `connect_first_dnie` ATR filter | Diff | |

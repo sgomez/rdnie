@@ -1,4 +1,6 @@
-//! CWA-14890 secure messaging of DNIe 3.0/4.0: session keys, command protection and response unprotection.
+//! CWA-14890 secure messaging of DNIe 3.0/4.0: session keys, command protection, response
+//! unprotection as JMulticard's `ApduEncrypterDes.decryptResponseApdu`, and `6Cxx` resends,
+//! at most 2 in a row.
 
 // Derived from JMulticard (https://github.com/ctt-gob-es/jmulticard, commit 4ec9494):
 // - es.gob.jmulticard.connection.AbstractApduEncrypter (Tomás García-Merás)
@@ -62,7 +64,7 @@ use zeroize::Zeroize;
 
 use crate::{
     Command, Error, Response, StatusWord, Transport,
-    transport::{WRONG_LENGTH, short_le},
+    transport::{MAX_RESENDS, WRONG_LENGTH, short_le},
 };
 
 const BLOCK: usize = 8;
@@ -135,29 +137,51 @@ impl SecureMessaging {
         })
     }
 
-    /// Sends a command through the channel and returns the card's plain answer.
+    /// Sends a command through the channel and returns the card's plain answer, resending it with
+    /// the Le of a `6Cxx` at most 2 times in a row; past that, [`Error::Status`] with the last one.
     pub(crate) fn transmit<T: Transport + ?Sized>(
         &mut self,
         transport: &mut T,
         command: &Command,
     ) -> Result<Response, Error> {
-        let protected = self.protect(command)?;
-        let response = self.unprotect(&transport.transmit(&protected)?)?;
-        match response.status.0.to_be_bytes() {
-            [WRONG_LENGTH, le] => {
-                let mut resent = Command {
-                    le: Some(short_le(le)),
-                    ..command.clone()
-                };
-                let response = self.transmit(transport, &resent);
-                resent.data.zeroize();
-                response
+        let mut resent = None;
+        let result = self.follow(transport, command, &mut resent);
+        if let Some(mut copy) = resent {
+            copy.data.zeroize();
+        }
+        result
+    }
+
+    /// Keeps the latest resent copy in `resent`, so the caller wipes it on every exit.
+    fn follow<T: Transport + ?Sized>(
+        &mut self,
+        transport: &mut T,
+        command: &Command,
+        resent: &mut Option<Command>,
+    ) -> Result<Response, Error> {
+        let mut resends = 0;
+        loop {
+            let sent = resent.as_ref().unwrap_or(command);
+            let protected = self.protect(sent)?;
+            let response = self.unprotect(&transport.transmit(&protected)?)?;
+            let [WRONG_LENGTH, le] = response.status.0.to_be_bytes() else {
+                return Ok(response);
+            };
+            if resends == MAX_RESENDS {
+                return Err(Error::Status(response.status));
             }
-            _ => Ok(response),
+            resends += 1;
+            let next = Command {
+                le: Some(short_le(le)),
+                ..sent.clone()
+            };
+            if let Some(mut old) = resent.replace(next) {
+                old.data.zeroize();
+            }
         }
     }
 
-    /// Checks and decrypts a response, incrementing the SSC first.
+    /// Checks and decrypts `[87] 99 8E` as JMulticard, incrementing the SSC first; bytes after `8E` are ignored.
     pub(crate) fn unprotect(&mut self, response: &Response) -> Result<Response, Error> {
         if response.status == CHANNEL_LOST {
             return Err(Error::ChannelLost);
@@ -179,21 +203,22 @@ impl SecureMessaging {
         } else {
             None
         };
-        let (TAG_STATUS, &[sw1, sw2]) = (tag, value) else {
+        let (TAG_STATUS, &[ref leading @ .., sw1, sw2]) = (tag, value) else {
             return Err(Error::SecureChannel("response has no status word object"));
         };
         let authenticated = &objects[..objects.len() - rest.len()];
-        let (tag, mac, rest) = read_tlv(rest)?;
-        if tag != TAG_MAC || !rest.is_empty() {
-            return Err(Error::SecureChannel("response has no trailing mac object"));
+        let (tag, mac, _) = read_tlv(rest)?;
+        if tag != TAG_MAC {
+            return Err(Error::SecureChannel("response has no mac object"));
         }
         self.verify_mac(authenticated, mac)?;
 
         let status = StatusWord(u16::from_be_bytes([sw1, sw2]));
-        let data = match cryptogram {
+        let mut data = match cryptogram {
             Some(cryptogram) => self.decrypt(cryptogram)?,
             None => Vec::new(),
         };
+        data.extend_from_slice(leading);
         Ok(Response { data, status })
     }
 
@@ -204,7 +229,7 @@ impl SecureMessaging {
     }
 
     fn decrypt(&self, cryptogram: &[u8]) -> Result<Vec<u8>, Error> {
-        let [PADDING_INDICATOR, ciphertext @ ..] = cryptogram else {
+        let [_indicator, ciphertext @ ..] = cryptogram else {
             return Err(Error::SecureChannel(
                 "cryptogram lacks its padding indicator",
             ));
@@ -532,6 +557,14 @@ mod tests {
     fn rejects_response_without_mac() {
         assert!(matches!(
             answered_session().unprotect(&protected_response("99029000 9000")),
+            Err(Error::SecureChannel(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_response_without_status_word() {
+        assert!(matches!(
+            answered_session().unprotect(&protected_response("8e08 e21d201538257ab2 9000")),
             Err(Error::SecureChannel(_))
         ));
     }

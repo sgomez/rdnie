@@ -3,7 +3,7 @@
 mod emulator;
 
 use emulator::{DNIE_3_ATR, Delivery, EmulatedDnie};
-use rdnie::{Command, Response, StatusWord, Transport};
+use rdnie::{Command, Error, Response, StatusWord, Transport};
 
 fn get_challenge(cla: u8, le: Option<u16>) -> Command {
     Command {
@@ -70,4 +70,20 @@ fn resends_without_le_with_the_one_the_card_asks_for() {
 fn returns_wrong_length_of_protected_command_as_is() {
     let response = challenge_on(Delivery::ExactLe, &get_challenge(0x0C, Some(4)));
     assert_eq!(response.status, StatusWord(0x6C08));
+}
+
+#[test]
+fn endless_pending_response_ends_with_its_status() {
+    let mut card = EmulatedDnie::new(&DNIE_3_ATR).delivering(Delivery::EndlessPending);
+    let error = card.transmit(&get_challenge(0x00, Some(8))).unwrap_err();
+    assert!(matches!(error, Error::Status(StatusWord(0x6105))));
+    assert_eq!(card.commands(), 1 + 256);
+}
+
+#[test]
+fn endless_wrong_length_ends_with_its_status() {
+    let mut card = EmulatedDnie::new(&DNIE_3_ATR).delivering(Delivery::EndlessWrongLength);
+    let error = card.transmit(&get_challenge(0x00, Some(8))).unwrap_err();
+    assert!(matches!(error, Error::Status(StatusWord(0x6C05))));
+    assert_eq!(card.commands(), 1 + 2);
 }
