@@ -49,8 +49,8 @@ pub enum Error {
     /// The PIN is blocked: no attempt is left.
     #[error("the PIN is blocked")]
     PinBlocked,
-    /// The PIN is not 8 to 16 printable ASCII characters.
-    #[error("the PIN must be 8 to 16 printable ASCII characters")]
+    /// The PIN is not 8 to 16 characters long.
+    #[error("the PIN must be 8 to 16 characters long")]
     InvalidPinFormat,
     /// The card refused the PIN.
     #[error("wrong PIN, {retries_left} attempts left")]

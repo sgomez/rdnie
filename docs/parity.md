@@ -24,7 +24,6 @@ Ordered by importance.
 10. **Minor:**
     - `StatusWord` displays hex only; `StandardErrorCodes` gives text (StandardErrorCodes.java:17-50). Spec #35.
     - `DnieAtr.toString` (chip, OS version, lifecycle) is not ported. Spec #35.
-    - rdnie accepts only 8–16 printable ASCII PIN characters (`pin.rs` `check_format`); Java sends any `char` as its low byte. Spec #37.
     - `DnieCertParseUtil` (holder name and number from the subject) is not ported. Spec #34.
 
 ## Intentional divergences

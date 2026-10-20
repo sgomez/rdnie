@@ -504,7 +504,7 @@ pub(crate) mod tests {
     #[test]
     fn rejects_a_malformed_pin_without_any_apdu() {
         let too_long = "a".repeat(17);
-        for pin in ["short", "ñandúñandú", "tab\tcharacter", too_long.as_str()] {
+        for pin in ["short", "ñandú", too_long.as_str()] {
             let mut session = open(signing_card());
             let key = session.certificates().unwrap().remove(0).key;
             let sent = session.transport.commands();
@@ -517,6 +517,48 @@ pub(crate) mod tests {
             assert!(matches!(result, Err(Error::InvalidPinFormat)), "{pin:?}");
             assert_eq!(session.transport.commands(), sent);
         }
+    }
+
+    #[test]
+    fn sends_a_non_ascii_pin_as_latin_1_bytes() {
+        let card = signing_card().with_pin_bytes(b"\xF1and\xFA\xE7o1");
+        assert!(sign_with_pin(card, "ñandúço1").0.is_ok());
+    }
+
+    #[test]
+    fn sends_symbols_and_spaces() {
+        let pin = "a b!@#$%&";
+        let card = signing_card().with_pin(pin);
+        assert!(sign_with_pin(card, pin).0.is_ok());
+    }
+
+    #[test]
+    fn sends_the_low_byte_of_each_utf16_unit() {
+        let card = signing_card().with_pin_bytes(b"\x00\x01\x02\x03abcde");
+        assert!(
+            sign_with_pin(card, "\u{100}\u{201}\u{302}\u{403}abcde")
+                .0
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn counts_the_length_in_utf16_units() {
+        let card = signing_card().with_pin_bytes(b"\xF1\xF1\xF1\xF1\xF1\xF1\xF1\xF1");
+        assert!(sign_with_pin(card, "ññññññññ").0.is_ok());
+        let sixteen = "ñ".repeat(16);
+        let card = signing_card().with_pin_bytes(&[0xF1; 16]);
+        assert!(sign_with_pin(card, &sixteen).0.is_ok());
+        let result = sign_with_pin(signing_card(), &"ñ".repeat(17)).0;
+        assert!(matches!(result, Err(Error::InvalidPinFormat)));
+    }
+
+    #[test]
+    fn a_wrong_non_ascii_pin_costs_one_attempt() {
+        let (result, card) = sign_with_pin(signing_card(), "ñandúço1");
+        assert!(matches!(result, Err(Error::WrongPin { retries_left: 2 })));
+        let attempts = card.pin_queries().iter().filter(|query| query.with_pin);
+        assert_eq!(attempts.count(), 1);
     }
 
     #[test]
