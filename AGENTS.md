@@ -28,7 +28,7 @@ Everything goes through the `justfile`: bare `just <recipe>`, one command per ca
 | On every red → green | `just test-one <filter>` |
 | Before committing | `just fmt`. Lefthook runs `just fmt-check` on commit |
 | Before pushing | The pre-push hook runs `just check` |
-| On opening the PR | The CI's verdict: `just check` on Linux, macOS and Windows |
+| On opening the PR | The CI's verdict: `just check` on Linux, `just test` on macOS and Windows |
 
 On Linux, building with `pcsc` needs `libpcsclite-dev`.
 

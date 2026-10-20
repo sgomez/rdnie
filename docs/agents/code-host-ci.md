@@ -4,7 +4,7 @@ Annex to [`code-host.md`](./code-host.md). **Open it only when you are about
 to wait for, read or classify a change's CI** — publishing a change, checking
 it out, reviewing the diff and merging need nothing from here.
 
-This repo: GitHub Actions, workflow `CI` (`.github/workflows/ci.yml`), on every pull request: `just check` on Linux, macOS and Windows. A red on one OS only is still a red.
+This repo: GitHub Actions, workflow `CI` (`.github/workflows/ci.yml`), on every pull request: `just check` on Linux, `just test` on macOS and Windows. A red on one OS only is still a red.
 
 Three operations read the same checks, for different readers.
 
