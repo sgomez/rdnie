@@ -299,6 +299,9 @@ fn validate_internal_authentication(
     terminal_key: &RsaPrivateKey,
     icc_key: &RsaPublicKey,
 ) -> Result<[u8; SEED_LENGTH], Error> {
+    if icc_key.size() < 2 + SEED_LENGTH + SHA1_LENGTH {
+        return Err(INTERNAL_AUTHENTICATION_FAILED);
+    }
     let sigmin = rsa_decrypt_and_check(terminal_key, Some(&mut OsRng), &uint(answer))
         .map_err(|_| INTERNAL_AUTHENTICATION_FAILED)?;
     if &sigmin >= icc_key.n() {
@@ -416,6 +419,13 @@ fn send(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use rsa::{BigUint, RsaPublicKey, pkcs8::EncodePublicKey};
+    use x509_cert::{
+        Certificate,
+        der::{Decode, Encode},
+        spki::SubjectPublicKeyInfoOwned,
+    };
+
     use super::check_answers;
     use crate::{
         Error, Session,
@@ -474,6 +484,28 @@ pub(crate) mod tests {
                 Err(Error::SecureChannel(_))
             ));
         }
+    }
+
+    #[test]
+    fn refuses_an_answer_framed_by_a_key_too_short_for_a_frame() {
+        let mut modulus = [0; 16];
+        modulus[0] = 0x6A;
+        modulus[15] = 0xBD;
+        let key =
+            RsaPublicKey::new(BigUint::from_bytes_be(&modulus), BigUint::from(65_537_u32)).unwrap();
+        let mut certificate = Certificate::from_der(&component_certificate()).unwrap();
+        certificate.tbs_certificate.subject_public_key_info =
+            SubjectPublicKeyInfoOwned::from_der(key.to_public_key_der().unwrap().as_bytes())
+                .unwrap();
+        let (challenge, _) = recorded_internal_authentication();
+        let roots = ComponentRoots::only(component_root_public_key());
+        assert!(matches!(
+            check_answers(
+                &answers(&challenge, &certificate.to_der().unwrap(), &[0x01]),
+                &roots
+            ),
+            Err(Error::SecureChannel(_))
+        ));
     }
 
     #[test]
