@@ -2,6 +2,7 @@ use crate::StatusWord;
 
 /// Failures talking to the DNIe.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The reader or transport layer did not deliver the APDU.
     #[error("transport failed: {0}")]
@@ -21,9 +22,15 @@ pub enum Error {
     /// The card answered `66 88`: it no longer recognises the secure channel.
     #[error("secure channel lost")]
     ChannelLost,
-    /// No reader holds a DNIe.
-    #[error("no DNIe in any reader")]
-    NoDnie,
+    /// The system has no smart card reader, or the named reader does not exist.
+    #[error("no smart card reader found")]
+    NoReader,
+    /// No scanned reader holds a card, or the named reader is empty.
+    #[error("no card in the reader")]
+    NoCard,
+    /// The card left the reader while connected: open a new transport and session.
+    #[error("the card was removed")]
+    CardRemoved,
     /// The card is not a DNIe.
     #[error("the card is not a DNIe")]
     NotDnie,
