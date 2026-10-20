@@ -46,6 +46,7 @@
 
 use std::fmt;
 
+use der::Decode;
 use flate2::{Decompress, FlushDecompress, Status};
 
 use crate::{
@@ -92,7 +93,9 @@ pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Certificate>, Error> 
     let listed = pkcs15::entries(&files::read(card, &location(CDF)?)?)?;
     let mut ders = Vec::with_capacity(listed.len());
     for entry in &listed {
-        ders.push(decompressed(files::read(card, &location(&entry.path)?)?));
+        let der = decompressed(files::read(card, &location(&entry.path)?)?);
+        x509_cert::Certificate::from_der(&der).map_err(|_| Error::MalformedPkcs15)?;
+        ders.push(der);
     }
     let keys = pkcs15::entries(&files::read(card, &location(PRKDF)?)?)?;
     let mut certificates = Vec::new();
