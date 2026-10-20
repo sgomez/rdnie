@@ -1,0 +1,73 @@
+[package]
+name = "rdnie-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "EUPL-1.2"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rdnie = { path = "..", default-features = false }
+
+# Its own workspace, so the crate's build never includes it.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "apdu"
+path = "fuzz_targets/apdu.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "files"
+path = "fuzz_targets/files.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pkcs15"
+path = "fuzz_targets/pkcs15.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "certificates"
+path = "fuzz_targets/certificates.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "holder"
+path = "fuzz_targets/holder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "secure_messaging"
+path = "fuzz_targets/secure_messaging.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "secure_messaging_raw"
+path = "fuzz_targets/secure_messaging_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cwa14890"
+path = "fuzz_targets/cwa14890.rs"
+test = false
+doc = false
+bench = false

@@ -5,6 +5,7 @@
 mod channel;
 mod chip;
 mod pkcs15;
+mod recorder;
 
 use std::collections::BTreeMap;
 
@@ -14,8 +15,12 @@ use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 use channel::CardChannel;
 pub use channel::ResponseShape;
 use chip::Chip;
-pub use chip::{Handshake, TerminalKey, component_root_public_key, foreign_root_public_key};
-pub use pkcs15::HolderCertificate;
+pub use chip::{
+    Handshake, TerminalKey, component_certificate, component_root_public_key,
+    foreign_root_public_key, intermediate_certificate,
+};
+pub use pkcs15::{HolderCertificate, cdf, prkdf};
+pub use recorder::{Recorder, write_corpus};
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
 pub const DNIE_3_ATR: [u8; 20] = [

@@ -13,6 +13,11 @@ mod cwa14890;
 mod emulator;
 mod error;
 mod files;
+#[cfg(test)]
+mod fuzz_seeds;
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzzing;
 mod holder;
 mod key_sets;
 #[cfg(feature = "pcsc")]

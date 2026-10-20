@@ -29,6 +29,14 @@ mutants *args:
 test-one filter:
     cargo test --quiet {{ filter }}
 
+# Runs one `fuzz/` target for `secs` seconds; Linux and macOS only, with nightly and cargo-fuzz.
+fuzz target secs="60":
+    cargo +nightly fuzz run {{ target }} -- -max_total_time={{ secs }} -timeout=10
+
+# Writes the emulator's responses into `fuzz/corpus/<target>`.
+fuzz-seed:
+    cargo test --quiet --lib --test fuzz_seeds -- --ignored
+
 # Looks for a DNIe in the readers without sending it any APDU.
 detect:
     cargo run --quiet --example detect
