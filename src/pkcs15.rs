@@ -69,6 +69,8 @@ const TYPE_ATTRIBUTES: Tag = Tag::ContextSpecific {
 
 /// A certificate in the CDF or a private key in the PrKDF.
 pub(crate) struct Entry {
+    /// Label from the common object attributes, read for certificates only.
+    pub(crate) label: String,
     /// Identifier that pairs a certificate with its key.
     pub(crate) id: Vec<u8>,
     /// File path, from the master file.
@@ -76,12 +78,13 @@ pub(crate) struct Entry {
 }
 
 /// Decodes the objects of a CDF or PrKDF, which ends at the first byte that starts no SEQUENCE.
-pub(crate) fn entries(file: &[u8]) -> Result<Vec<Entry>, Error> {
+/// With `labelled`, each object must carry a UTF-8 label.
+pub(crate) fn entries(file: &[u8], labelled: bool) -> Result<Vec<Entry>, Error> {
     let mut reader = SliceReader::new(file).map_err(malformed)?;
     let mut entries = Vec::new();
     while entries.len() < MAX_OBJECTS {
         match AnyRef::decode(&mut reader) {
-            Ok(object) if object.tag() == Tag::Sequence => entries.push(entry(object)?),
+            Ok(object) if object.tag() == Tag::Sequence => entries.push(entry(object, labelled)?),
             _ if entries.is_empty() => return Err(Error::MalformedPkcs15),
             _ => break,
         }
@@ -91,8 +94,13 @@ pub(crate) fn entries(file: &[u8]) -> Result<Vec<Entry>, Error> {
 
 /// Both object types share the layout that matters: the identifier opens the class attributes,
 /// and the path opens the type attributes.
-fn entry(object: AnyRef<'_>) -> Result<Entry, Error> {
+fn entry(object: AnyRef<'_>, labelled: bool) -> Result<Entry, Error> {
     let attributes = children(object)?;
+    let label = if labelled {
+        label(attributes.first().ok_or(Error::MalformedPkcs15)?)?
+    } else {
+        String::new()
+    };
     let class = attributes.get(1).ok_or(Error::MalformedPkcs15)?;
     let id = first(*class, Tag::Sequence, Tag::OctetString)?;
     let typed = attributes
@@ -104,9 +112,16 @@ fn entry(object: AnyRef<'_>) -> Result<Entry, Error> {
     let path = first(type_attributes, Tag::Sequence, Tag::Sequence)?;
     let path = first(path, Tag::Sequence, Tag::OctetString)?;
     Ok(Entry {
+        label,
         id: octets(id)?,
         path: octets(path)?,
     })
+}
+
+/// The mandatory `UTF8String` that opens the common object attributes.
+fn label(common: &AnyRef<'_>) -> Result<String, Error> {
+    let label = first(*common, Tag::Sequence, Tag::Utf8String)?;
+    String::from_utf8(label.value().to_vec()).map_err(|_| Error::MalformedPkcs15)
 }
 
 /// The first element of `parent`, checking both tags.

@@ -64,6 +64,8 @@ const COMPRESSION_HEADER: usize = 8;
 pub struct Certificate {
     /// X.509 certificate in DER.
     pub der: Vec<u8>,
+    /// PKCS#15 label, exactly as the CDF stores it.
+    pub label: String,
     /// Private key that matches the certificate.
     pub key: KeyReference,
 }
@@ -90,13 +92,13 @@ impl fmt::Debug for KeyReference {
 
 /// Reads the CDF, each certificate it lists and the PrKDF, and keeps the certificates with a key.
 pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Certificate>, Error> {
-    let listed = pkcs15::entries(&files::read(card, &location(CDF)?)?)?;
+    let listed = pkcs15::entries(&files::read(card, &location(CDF)?)?, true)?;
     let mut ders = Vec::with_capacity(listed.len());
     for entry in &listed {
         let stored = decompressed(files::read(card, &location(&entry.path)?)?);
         ders.push(x509(&stored).ok_or(Error::MalformedPkcs15)?);
     }
-    let keys = pkcs15::entries(&files::read(card, &location(PRKDF)?)?)?;
+    let keys = pkcs15::entries(&files::read(card, &location(PRKDF)?)?, false)?;
     let mut certificates = Vec::new();
     for (entry, der) in listed.into_iter().zip(ders) {
         let Some(key) = keys.iter().find(|key| key.id == entry.id) else {
@@ -107,6 +109,7 @@ pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Certificate>, Error> 
             .ok_or(Error::MalformedPkcs15)?;
         certificates.push(Certificate {
             der,
+            label: entry.label,
             key: KeyReference { id: entry.id, file },
         });
     }
