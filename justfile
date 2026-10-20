@@ -17,6 +17,10 @@ lint:
 test:
     cargo test --quiet
 
+# Advisories, licenses and sources of the dependencies (`deny.toml`).
+deny:
+    cargo deny check
+
 test-one filter:
     cargo test --quiet {{ filter }}
 
