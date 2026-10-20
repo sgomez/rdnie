@@ -139,7 +139,8 @@ impl Drop for Connection {
 
 impl Transport for PcscTransport {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
-        transmit(&self.card, apdu)
+        let result = transmit(&self.card, apdu);
+        recovering(result, || reconnect(&mut self.card))
     }
 
     /// Disconnects with `ResetCard` and reconnects with the negotiated protocol, as `SmartcardIoConnection.reset` does.
@@ -158,14 +159,36 @@ impl Transport for PcscTransport {
         &mut self,
         body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        let mut transaction = InTransaction(self.card.transaction().map_err(transport)?);
-        let result = body(&mut transaction);
-        let ended = transaction
-            .0
-            .end(Disposition::LeaveCard)
-            .map_err(|(_, error)| transport(error));
-        outcome(result, ended)
+        let result = in_transaction(&mut self.card, body);
+        recovering(result, || reconnect(&mut self.card))
     }
+}
+
+fn in_transaction<R>(
+    card: &mut Card,
+    body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+) -> Result<R, Error> {
+    let mut transaction = InTransaction(card.transaction().map_err(transport)?);
+    let result = body(&mut transaction);
+    let ended = transaction
+        .0
+        .end(Disposition::LeaveCard)
+        .map_err(|(_, error)| transport(error));
+    outcome(result, ended)
+}
+
+/// PC/SC keeps answering `SCARD_W_RESET_CARD` on a handle until it reconnects.
+fn recovering<R>(result: Result<R, Error>, reconnect: impl FnOnce()) -> Result<R, Error> {
+    if matches!(result, Err(Error::CardReset)) {
+        reconnect();
+    }
+    result
+}
+
+fn reconnect(card: &mut Card) {
+    let protocol = negotiated(card);
+    // A failed reconnect surfaces on the next operation.
+    let _ = card.reconnect(ShareMode::Shared, protocol, Disposition::LeaveCard);
 }
 
 fn negotiated(card: &Card) -> Protocols {
@@ -252,6 +275,18 @@ mod tests {
     fn reports_a_failed_end_after_a_successful_body() {
         let outcome = outcome(Ok(1), Err(Error::Transport("end".into())));
         assert!(matches!(outcome, Err(Error::Transport(_))));
+    }
+
+    #[test]
+    fn reconnects_only_after_a_card_reset() {
+        let reconnects = |result: Result<(), Error>| {
+            let mut reconnected = false;
+            let _ = recovering(result, || reconnected = true);
+            reconnected
+        };
+        assert!(reconnects(Err(Error::CardReset)));
+        assert!(!reconnects(Err(Error::ChannelLost)));
+        assert!(!reconnects(Ok(())));
     }
 
     #[test]

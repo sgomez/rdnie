@@ -62,6 +62,8 @@ pub struct Session<T: Transport> {
     /// Support number, which picks the channel key set; card data, so never logged.
     idesp: Option<String>,
     roots: ComponentRoots,
+    /// The count [`Session::pin_retries`] last showed, which the next sign expects.
+    shown_retries: Option<u8>,
 }
 
 impl<T: Transport> Session<T> {
@@ -87,6 +89,7 @@ impl<T: Transport> Session<T> {
             transport,
             idesp,
             roots,
+            shown_retries: None,
         })
     }
 
@@ -109,13 +112,15 @@ impl<T: Transport> Session<T> {
     pub fn pin_retries(&mut self) -> Result<u8, Error> {
         let idesp = self.idesp.as_deref();
         let roots = &self.roots;
-        operation(&mut self.transport, |card| {
+        let retries = operation(&mut self.transport, |card| {
             pin::retries_left(card, idesp, roots)
-        })
+        })?;
+        self.shown_retries = Some(retries);
+        Ok(retries)
     }
 
     /// Signs a SHA-256/384/512 digest with `key` after verifying `pin`, and returns the PKCS#1
-    /// v1.5 signature.
+    /// v1.5 signature; the retries must still be those [`Session::pin_retries`] last showed.
     ///
     /// # Errors
     ///
@@ -132,7 +137,11 @@ impl<T: Transport> Session<T> {
     ) -> Result<Vec<u8>, Error> {
         pin.check_format()?;
         let digest_info = signature::digest_info(algorithm, digest)?;
-        let retries = self.pin_retries()?;
+        let retries = match self.shown_retries.take() {
+            Some(shown) => shown,
+            None => self.pin_retries()?,
+        };
+        self.shown_retries = None;
         if retries == 0 {
             return Err(Error::PinBlocked);
         }
@@ -422,6 +431,22 @@ pub(crate) mod tests {
         let card = signing_card().losing_a_retry_between_phases();
         let (result, card) = sign_with_pin(card, DEFAULT_PIN);
         assert!(matches!(result, Err(Error::PinRetriesChanged)));
+        assert!(card.pin_queries().iter().all(|query| !query.with_pin));
+    }
+
+    #[test]
+    fn aborts_before_verify_when_the_retries_changed_while_the_caller_prompted() {
+        let mut session = open(signing_card().losing_a_retry_between_phases());
+        let key = session.certificates().unwrap().remove(0).key;
+        assert_eq!(session.pin_retries().unwrap(), 3);
+        let result = session.sign(
+            &[0; 32],
+            HashAlgorithm::Sha256,
+            &key,
+            Pin::new(DEFAULT_PIN.to_owned()),
+        );
+        assert!(matches!(result, Err(Error::PinRetriesChanged)));
+        let card = session.into_transport();
         assert!(card.pin_queries().iter().all(|query| !query.with_pin));
     }
 

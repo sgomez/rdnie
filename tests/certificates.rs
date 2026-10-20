@@ -80,6 +80,15 @@ fn lists_certificates_through_get_response() {
 }
 
 #[test]
+fn lists_certificates_when_the_card_wants_the_exact_le() {
+    let certificates = [HolderCertificate::new(1, 120)];
+    let card = EmulatedDnie::new(&DNIE_3_ATR)
+        .delivering(Delivery::ExactLe)
+        .with_certificates(&certificates);
+    assert_lists(card, &ders(&certificates));
+}
+
+#[test]
 fn reports_missing_cdf_with_its_status_word() {
     let card = EmulatedDnie::new(&DNIE_3_ATR);
     let error = Session::open(card).unwrap().certificates().unwrap_err();

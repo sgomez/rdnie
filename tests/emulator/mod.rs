@@ -436,13 +436,17 @@ impl EmulatedDnie {
                     None if self.files.keys().any(|file| file.starts_with(&path)) => 0,
                     None => return vec![0x6A, 0x82],
                 };
-                self.current = path;
                 let mut proprietary = vec![0x81, 0x02];
                 proprietary.extend_from_slice(&u16::try_from(announced).unwrap().to_be_bytes());
                 proprietary.extend_from_slice(&[0x82, 0x01, 0x01, 0x83, 0x02, high, low]);
                 let mut fci = vec![0x6F, u8::try_from(proprietary.len()).unwrap()];
                 fci.extend(proprietary);
-                self.deliver(fci, apdu.le)
+                let answer = self.deliver(fci, apdu.le);
+                // A `6Cxx` asks for the SELECT again, so the card stays where it was.
+                if !matches!(answer.as_slice(), [0x6C, _]) {
+                    self.current = path;
+                }
+                answer
             }
             _ => vec![0x6A, 0x86],
         }
