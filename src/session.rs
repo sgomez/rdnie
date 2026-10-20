@@ -232,7 +232,7 @@ pub(crate) mod tests {
     use crate::{
         Error, HashAlgorithm, KeyGeneration, Pin, StatusWord,
         emulator::{
-            DEFAULT_PIN, DNIE_3_ATR, EmulatedDnie, HolderCertificate, TerminalKey,
+            DEFAULT_PIN, DNIE_3_ATR, EmulatedDnie, HolderCertificate, ResponseShape, TerminalKey,
             component_root_public_key,
         },
         key_sets::{ComponentRoots, KeySet, R1_PIN, R1_USER, R2_PIN, R2_USER},
@@ -623,6 +623,54 @@ pub(crate) mod tests {
     fn reports_a_secure_channel_error_on_a_bad_response_mac() {
         let card = card_with_channel().corrupting_a_response_mac();
         assert!(matches!(retries(card), Err(Error::SecureChannel(_))));
+    }
+
+    fn reads_retries_and_signs_over(shape: ResponseShape) {
+        let mut session = open(signing_card().with_pin_retries(2).shaping_responses(shape));
+        assert_eq!(session.pin_retries().unwrap(), 2);
+        let certificate = session.certificates().unwrap().remove(0).der;
+        let digest = Sha256::digest(b"document");
+        let signature = sign_with(&mut session, &digest, HashAlgorithm::Sha256).unwrap();
+        verify(
+            &certificate,
+            Pkcs1v15Sign::new::<Sha256>(),
+            &digest,
+            &signature,
+        );
+    }
+
+    #[test]
+    fn ignores_bytes_after_the_response_mac() {
+        reads_retries_and_signs_over(ResponseShape::TrailingBytes(&[0x00, 0x8E, 0x01, 0xFF]));
+    }
+
+    #[test]
+    fn skips_the_first_cryptogram_byte_whatever_its_value() {
+        reads_retries_and_signs_over(ResponseShape::CryptogramIndicator(0x02));
+    }
+
+    #[test]
+    fn appends_the_status_word_object_before_its_last_two_bytes_to_the_data() {
+        reads_retries_and_signs_over(ResponseShape::LongStatusWord(3));
+    }
+
+    #[test]
+    fn takes_the_data_from_a_status_word_object_without_cryptogram() {
+        reads_retries_and_signs_over(ResponseShape::LongStatusWord(usize::MAX));
+    }
+
+    #[test]
+    fn refuses_malformed_responses_before_sending_the_pin() {
+        for shape in [
+            ResponseShape::ShortStatusWord,
+            ResponseShape::EmptyCryptogram,
+        ] {
+            let card = || signing_card().shaping_responses(shape);
+            assert!(matches!(retries(card()), Err(Error::SecureChannel(_))));
+            let (result, card) = sign_with_pin(card(), DEFAULT_PIN);
+            assert!(matches!(result, Err(Error::SecureChannel(_))));
+            assert!(card.pin_queries().iter().all(|query| !query.with_pin));
+        }
     }
 
     #[test]

@@ -12,6 +12,7 @@ use rdnie::{Error, Transport};
 use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 
 use channel::CardChannel;
+pub use channel::ResponseShape;
 use chip::Chip;
 pub use chip::{Handshake, TerminalKey, component_root_public_key, foreign_root_public_key};
 pub use pkcs15::HolderCertificate;
@@ -81,6 +82,7 @@ pub struct EmulatedDnie {
     master_file_answer: Vec<u8>,
     handshake_fault: Option<HandshakeFault>,
     unauthenticated_read: Option<u16>,
+    response_shape: ResponseShape,
 }
 
 /// A step of the handshake the card fails.
@@ -169,6 +171,7 @@ impl EmulatedDnie {
             master_file_answer: Vec::new(),
             handshake_fault: None,
             unauthenticated_read: None,
+            response_shape: ResponseShape::Standard,
         }
     }
 
@@ -292,6 +295,12 @@ impl EmulatedDnie {
     /// Answers the next protected `READ BINARY` with its plain data under the outer `status`.
     pub fn answering_a_read_unauthenticated_with(mut self, status: u16) -> Self {
         self.unauthenticated_read = Some(status);
+        self
+    }
+
+    /// Lays out every protected response as `shape`.
+    pub fn shaping_responses(mut self, shape: ResponseShape) -> Self {
+        self.response_shape = shape;
         self
     }
 
@@ -432,7 +441,7 @@ impl EmulatedDnie {
             self.delivery = delivery;
             answer
         };
-        let mut response = channel.wrap(&answer);
+        let mut response = channel.wrap(&answer, self.response_shape);
         if inner.ins == READ_BINARY
             && let Some(status) = self.unauthenticated_read.take()
         {
