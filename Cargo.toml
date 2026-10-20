@@ -24,7 +24,7 @@ required-features = ["pcsc"]
 
 [dependencies]
 cbc = { version = "0.2", features = ["alloc"] }
-der = "0.7"
+der = "0.8"
 des = "0.9"
 flate2 = "1"
 pcsc = { version = "2.9", optional = true }
