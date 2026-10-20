@@ -99,7 +99,7 @@ fn lists_certificates_when_the_card_wants_the_exact_le() {
 fn reports_missing_cdf_with_its_status_word() {
     let card = EmulatedDnie::new(&DNIE_3_ATR);
     let error = Session::open(card).unwrap().certificates().unwrap_err();
-    assert_eq!(error.to_string(), "card answered 6A 82");
+    assert_eq!(error.to_string(), "card answered file not found (6A 82)");
 }
 
 fn load_error(certificates: &[HolderCertificate]) -> Error {
