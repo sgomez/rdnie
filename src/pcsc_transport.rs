@@ -62,8 +62,6 @@ pub struct PcscTransport {
 impl PcscTransport {
     /// Connects in shared mode to the first reader holding a DNIe.
     ///
-    /// # Errors
-    ///
     /// Reads each reader's ATR without resetting the card, and takes the first reader whose
     /// ATR is a DNIe, burned ones included, as `DnieFactory.getDnie` does.
     ///
@@ -369,7 +367,7 @@ fn pcsc_atr(card: &Card) -> Result<Vec<u8>, pcsc::Error> {
 fn connecting(error: pcsc::Error) -> Error {
     match error {
         pcsc::Error::NoReadersAvailable | pcsc::Error::UnknownReader => Error::NoReader,
-        pcsc::Error::NoSmartcard => Error::NoCard,
+        pcsc::Error::NoSmartcard | pcsc::Error::RemovedCard => Error::NoCard,
         error => Error::Transport(error.to_string()),
     }
 }
@@ -410,6 +408,10 @@ mod tests {
     fn reports_an_empty_reader_while_connecting() {
         assert!(matches!(
             connecting(pcsc::Error::NoSmartcard),
+            Error::NoCard
+        ));
+        assert!(matches!(
+            connecting(pcsc::Error::RemovedCard),
             Error::NoCard
         ));
     }
