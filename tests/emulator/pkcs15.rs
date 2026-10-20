@@ -42,6 +42,7 @@ pub struct HolderCertificate {
     pub key: Option<RsaPrivateKey>,
     id: u8,
     compressed: bool,
+    trailing: usize,
     cdf_path: Option<Vec<u8>>,
 }
 
@@ -80,6 +81,7 @@ impl HolderCertificate {
             key: None,
             id,
             compressed: false,
+            trailing: 0,
             cdf_path: None,
         }
     }
@@ -89,15 +91,23 @@ impl HolderCertificate {
         self
     }
 
+    /// Stores `bytes` of padding after the DER.
+    pub fn followed_by(mut self, bytes: usize) -> Self {
+        self.trailing = bytes;
+        self
+    }
+
     pub fn without_key(mut self) -> Self {
         self.key_file = None;
         self
     }
 
-    /// The bytes the card stores: the DER, or an 8-byte header and the DER in zlib.
+    /// The bytes the card stores: the DER and its padding, or an 8-byte header and the DER in zlib.
     pub fn stored(&self) -> Vec<u8> {
         if !self.compressed {
-            return self.der.clone();
+            let mut stored = self.der.clone();
+            stored.resize(stored.len() + self.trailing, 0xFF);
+            return stored;
         }
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(&self.der).unwrap();

@@ -37,6 +37,13 @@ fn lists_certificates_as_der() {
 }
 
 #[test]
+fn ignores_bytes_after_an_uncompressed_certificate() {
+    let certificates = [HolderCertificate::new(1, 120).followed_by(32)];
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
+    assert_lists(card, &ders(&certificates));
+}
+
+#[test]
 fn decompresses_compressed_certificates() {
     let certificates = [
         HolderCertificate::new(1, 900).compressed(),
