@@ -22,10 +22,11 @@ mod pkcs15;
 mod secure_messaging;
 mod session;
 mod signature;
+mod standard_error_codes;
 mod transport;
 
 pub use apdu::{Command, Response, StatusWord};
-pub use atr::is_dnie;
+pub use atr::{describe_atr, is_dnie};
 pub use certificates::{Certificate, INTERMEDIATE_CA_LABEL, KeyReference};
 pub use error::Error;
 pub use holder::Holder;

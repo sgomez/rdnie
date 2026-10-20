@@ -46,28 +46,33 @@ use zeroize::Zeroize;
 use crate::{Command, Error, Response};
 
 /// Channel the APDUs travel through: PC/SC in production, an emulator in tests.
+///
+/// After [`Error::CardRemoved`] the transport is spent: open a new transport and a new session.
 pub trait Transport {
     /// Sends a raw APDU and returns the response including its status word.
     ///
     /// # Errors
     ///
-    /// [`Error::Transport`] if the APDU does not reach the card and [`Error::CardReset`] if the
-    /// card was reset since the last command.
+    /// [`Error::Transport`] if the APDU does not reach the card, [`Error::CardReset`] if the
+    /// card was reset since the last command and [`Error::CardRemoved`] if it left the reader.
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error>;
 
     /// Resets the card and returns its ATR.
     ///
     /// # Errors
     ///
-    /// [`Error::Transport`] if the card cannot be reset.
+    /// [`Error::Transport`] if the card cannot be reset, [`Error::NoReader`] or
+    /// [`Error::NoCard`] if the reader or card is gone on reconnecting. After a failed reset,
+    /// every call returns that error until a later reset reconnects.
     fn reset(&mut self) -> Result<Vec<u8>, Error>;
 
     /// Runs `body` with exclusive access to the card.
     ///
     /// # Errors
     ///
-    /// Those of `body`, [`Error::Transport`] if the transaction cannot start or end and
-    /// [`Error::CardReset`] if the card was reset before it started.
+    /// Those of `body`, [`Error::Transport`] if the transaction cannot start or end,
+    /// [`Error::CardReset`] if the card was reset before it started and [`Error::CardRemoved`]
+    /// if it left the reader.
     fn transaction<R>(
         &mut self,
         body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
