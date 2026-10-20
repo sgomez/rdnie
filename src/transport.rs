@@ -59,7 +59,9 @@ pub trait Transport {
     ///
     /// # Errors
     ///
-    /// [`Error::Transport`] if the card cannot be reset.
+    /// [`Error::Transport`] if the card cannot be reset, [`Error::NoReader`] or
+    /// [`Error::NoCard`] if the reader or card is gone on reconnecting. After a failed reset,
+    /// every call returns that error until a later reset reconnects.
     fn reset(&mut self) -> Result<Vec<u8>, Error>;
 
     /// Runs `body` with exclusive access to the card.

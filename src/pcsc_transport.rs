@@ -40,10 +40,7 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-use std::{
-    ffi::CString,
-    ops::{Deref, DerefMut},
-};
+use std::ffi::CString;
 
 use pcsc::{
     Attribute, Card, Context, Disposition, MAX_BUFFER_SIZE, Protocol, Protocols, Scope, ShareMode,
@@ -90,7 +87,7 @@ impl PcscTransport {
     /// [`Error::CardRemoved`] if the card left the reader, [`Error::CardReset`] if it was reset,
     /// and [`Error::Transport`] if PC/SC fails otherwise.
     pub fn atr(&self) -> Result<Vec<u8>, Error> {
-        atr(&self.card)
+        atr(self.card.card()?)
     }
 }
 
@@ -104,8 +101,11 @@ enum Probe<C> {
 fn probe(context: &Context, reader: CString) -> Probe<(CString, Connection)> {
     let attempt = context
         .connect(&reader, ShareMode::Shared, Protocols::ANY)
-        .map(|card| Connection(Some(card)))
-        .and_then(|card| pcsc_atr(&card).map(|atr| (card, atr)));
+        .and_then(|card| {
+            let atr = pcsc_atr(&card);
+            let card = Connection(Ok(card));
+            atr.map(|atr| (card, atr))
+        });
     match attempt {
         Ok((card, atr)) => Probe::Card((reader, card), atr),
         Err(pcsc::Error::NoSmartcard | pcsc::Error::RemovedCard) => Probe::Empty,
@@ -136,34 +136,26 @@ fn first_dnie<C>(probes: impl IntoIterator<Item = Probe<C>>) -> Result<C, Error>
 }
 
 /// Card handle that disconnects with `LeaveCard`, as `SmartcardIoConnection.close` does.
-struct Connection(Option<Card>);
+///
+/// Holds why the last reconnect failed instead of a handle, so later calls report it.
+struct Connection(Result<Card, pcsc::Error>);
 
 impl Connection {
+    fn card(&self) -> Result<&Card, Error> {
+        usable(&self.0)
+    }
+
+    fn card_mut(&mut self) -> Result<&mut Card, Error> {
+        usable_mut(&mut self.0)
+    }
+
     fn disconnect(&mut self, disposition: Disposition) {
-        if let Some(card) = self.0.take() {
+        if let Ok(card) = std::mem::replace(&mut self.0, Err(pcsc::Error::InvalidHandle)) {
             if let Err((card, _)) = card.disconnect(disposition) {
                 // Dropping it would disconnect with ResetCard.
                 std::mem::forget(card);
             }
         }
-    }
-}
-
-impl Deref for Connection {
-    type Target = Card;
-
-    fn deref(&self) -> &Card {
-        self.0
-            .as_ref()
-            .expect("the card is only taken on disconnect")
-    }
-}
-
-impl DerefMut for Connection {
-    fn deref_mut(&mut self) -> &mut Card {
-        self.0
-            .as_mut()
-            .expect("the card is only taken on disconnect")
     }
 }
 
@@ -173,29 +165,45 @@ impl Drop for Connection {
     }
 }
 
+fn usable<C>(handle: &Result<C, pcsc::Error>) -> Result<&C, Error> {
+    handle.as_ref().map_err(|error| connecting(*error))
+}
+
+fn usable_mut<C>(handle: &mut Result<C, pcsc::Error>) -> Result<&mut C, Error> {
+    handle.as_mut().map_err(|error| connecting(*error))
+}
+
+/// Replaces the handle with a new connection, keeping the failure if there is none.
+fn reopen<C>(
+    handle: &mut Result<C, pcsc::Error>,
+    connect: impl FnOnce() -> Result<C, pcsc::Error>,
+) -> Result<&C, Error> {
+    *handle = connect();
+    usable(handle)
+}
+
 impl Transport for PcscTransport {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
-        let result = transmit(&self.card, apdu);
+        let result = transmit(self.card.card()?, apdu);
         recovering(result, || reconnect(&mut self.card))
     }
 
-    /// Disconnects with `ResetCard` and reconnects with the negotiated protocol, as `SmartcardIoConnection.reset` does.
+    /// Disconnects with `ResetCard` and reconnects to the same reader with the negotiated
+    /// protocol, as `SmartcardIoConnection.reset` does; also reconnects after a failed reset.
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        let protocol = negotiated(&self.card);
+        let protocol = self.card.card().map_or(Protocols::ANY, negotiated);
         self.card.disconnect(Disposition::ResetCard);
-        let card = self
-            .context
-            .connect(&self.reader, ShareMode::Shared, protocol)
-            .map_err(connecting)?;
-        self.card = Connection(Some(card));
-        atr(&self.card)
+        let (context, reader) = (&self.context, &self.reader);
+        atr(reopen(&mut self.card.0, || {
+            context.connect(reader, ShareMode::Shared, protocol)
+        })?)
     }
 
     fn transaction<R>(
         &mut self,
         body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        let result = in_transaction(&mut self.card, body);
+        let result = in_transaction(self.card.card_mut()?, body);
         recovering(result, || reconnect(&mut self.card))
     }
 }
@@ -221,10 +229,12 @@ fn recovering<R>(result: Result<R, Error>, reconnect: impl FnOnce()) -> Result<R
     result
 }
 
-fn reconnect(card: &mut Card) {
-    let protocol = negotiated(card);
-    // A failed reconnect surfaces on the next operation.
-    let _ = card.reconnect(ShareMode::Shared, protocol, Disposition::LeaveCard);
+fn reconnect(connection: &mut Connection) {
+    if let Ok(card) = connection.card_mut() {
+        let protocol = negotiated(card);
+        // A failed reconnect surfaces on the next operation.
+        let _ = card.reconnect(ShareMode::Shared, protocol, Disposition::LeaveCard);
+    }
 }
 
 fn negotiated(card: &Card) -> Protocols {
@@ -372,6 +382,32 @@ mod tests {
         assert!(!reconnects(Err(Error::ChannelLost)));
         assert!(!reconnects(Err(Error::CardRemoved)));
         assert!(!reconnects(Ok(())));
+    }
+
+    #[test]
+    fn a_failed_reopen_leaves_no_handle_and_later_calls_fail() {
+        let mut handle = Ok("A");
+        let reopened = reopen(&mut handle, || Err(pcsc::Error::NoSmartcard)).copied();
+        assert!(matches!(reopened, Err(Error::NoCard)));
+        assert!(matches!(usable(&handle), Err(Error::NoCard)));
+        assert!(matches!(usable_mut(&mut handle), Err(Error::NoCard)));
+    }
+
+    #[test]
+    fn a_lost_handle_reports_the_reconnect_failure_as_mapped() {
+        let mut handle = Ok("A");
+        let _ = reopen(&mut handle, || Err(pcsc::Error::UnknownReader));
+        assert!(matches!(usable(&handle), Err(Error::NoReader)));
+        let _ = reopen(&mut handle, || Err(pcsc::Error::SharingViolation));
+        assert!(matches!(usable(&handle), Err(Error::Transport(_))));
+    }
+
+    #[test]
+    fn a_later_reopen_restores_the_handle() {
+        let mut handle = Ok("A");
+        let _ = reopen(&mut handle, || Err(pcsc::Error::NoSmartcard));
+        assert_eq!(reopen(&mut handle, || Ok("A")).ok(), Some(&"A"));
+        assert_eq!(usable(&handle).ok(), Some(&"A"));
     }
 
     const DNIE_3: [u8; 20] = [
