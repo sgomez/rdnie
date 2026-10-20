@@ -1,4 +1,5 @@
-//! Manual probe for the card's holder: prints ATR, status words, labels, counts and pass/fail only.
+//! Manual probe for the card's holder: prints ATR, status words, labels, counts and pass/fail only;
+//! `--verbose` also prints the holder's data, which must never leave the machine.
 
 use std::fmt::Write as _;
 
@@ -36,7 +37,10 @@ fn run() -> Result<(), Error> {
     println!("certificates: {}", certificates.len());
     for certificate in &certificates {
         println!("label: {}", certificate.label);
-        holder(&certificate.der);
+        holder(
+            &certificate.der,
+            std::env::args().any(|argument| argument == "--verbose"),
+        );
     }
     let intermediate = session.certificate(INTERMEDIATE_CA_LABEL)?;
     println!(
@@ -103,8 +107,8 @@ fn sign(session: &mut Session<PcscTransport>, certificates: &[Certificate]) -> R
     Ok(())
 }
 
-/// Prints which holder fields the certificate yields, never their values.
-fn holder(der: &[u8]) {
+/// Prints which holder fields the certificate yields; their values only when `verbose`.
+fn holder(der: &[u8], verbose: bool) {
     let holder = match Holder::from_der(der) {
         Ok(holder) => holder,
         Err(error) => {
@@ -112,13 +116,17 @@ fn holder(der: &[u8]) {
             return;
         }
     };
-    let present = |field: &Option<String>| if field.is_some() { "yes" } else { "no" };
+    let show = |field: &Option<String>| match field {
+        Some(value) if verbose => format!("{value:?}"),
+        Some(_) => "yes".to_owned(),
+        None => "no".to_owned(),
+    };
     println!(
         "  holder: name {}, first surname {}, second surname {}, number {}",
-        present(&holder.name),
-        present(&holder.first_surname),
-        present(&holder.second_surname),
-        present(&holder.number),
+        show(&holder.name),
+        show(&holder.first_surname),
+        show(&holder.second_surname),
+        show(&holder.number),
     );
 }
 
