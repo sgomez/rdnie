@@ -54,6 +54,10 @@ pub enum Delivery {
     GetResponse { chunk: usize },
     /// Only when Le matches its length; otherwise `6Cxx` with the right one.
     ExactLe,
+    /// Answers `61xx` to the command and to every `GET RESPONSE`.
+    EndlessPending,
+    /// Answers `6Cxx` to every command, whatever its Le.
+    EndlessWrongLength,
 }
 
 /// Card side of the protocol.
@@ -354,6 +358,7 @@ impl EmulatedDnie {
             READ_BINARY => self.read_binary(apdu),
             GET_CHALLENGE if self.faulty(HandshakeFault::RefusingChallenge) => vec![0x69, 0x85],
             GET_CHALLENGE => self.deliver(CHALLENGE.to_vec(), apdu.le),
+            GET_RESPONSE if matches!(self.delivery, Delivery::EndlessPending) => vec![0x61, 0x05],
             GET_RESPONSE if !self.pending.is_empty() => self.serve_pending(apdu.le.unwrap_or(256)),
             GET_RESPONSE => vec![0x69, 0x85],
             _ if self.chip.is_some() => self.authenticate(apdu),
@@ -571,6 +576,8 @@ impl EmulatedDnie {
             }
             Delivery::ExactLe if le == Some(data.len()) => with_status(data, 0x9000),
             Delivery::ExactLe => vec![0x6C, length_byte(data.len())],
+            Delivery::EndlessPending => vec![0x61, 0x05],
+            Delivery::EndlessWrongLength => vec![0x6C, 0x05],
         }
     }
 
