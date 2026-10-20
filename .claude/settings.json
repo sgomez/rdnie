@@ -9,6 +9,7 @@
   },
   "permissions": {
     "allow": [
+      "Bash(gh pr create:*)",
       "Bash(gh pr ready:*)",
       "Bash(gh pr comment:*)",
       "Bash(gh pr merge:*)",
