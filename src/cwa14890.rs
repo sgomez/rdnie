@@ -242,7 +242,6 @@ fn verify_certificate(card: &mut dyn Transport, cvc: &[u8]) -> Result<(), Error>
         .map(drop)
 }
 
-/// A status word error becomes a refusal of the handshake step; any other error is kept.
 fn refusal(error: Error, reason: &'static str) -> Error {
     match error {
         Error::Status(_) => Error::SecureChannel(reason),

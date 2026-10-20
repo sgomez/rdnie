@@ -191,7 +191,7 @@ fn read_binary_complete(card: &mut dyn Transport, length: usize) -> Result<Vec<u
 
 #[cfg(test)]
 mod tests {
-    use super::{Location, MAX_READ_CHUNK, read, select_master_file};
+    use super::{Location, read, select_master_file};
     use crate::{
         cwa14890,
         emulator::{DNIE_3_ATR, EmulatedDnie, component_root_public_key},
@@ -218,12 +218,21 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_chunks_a_secure_channel_authenticated_only_up_to_a_warning() {
+    fn keeps_the_authenticated_chunk_that_ends_at_an_end_of_file_warning() {
         let content: Vec<u8> = (0..=255).cycle().take(300).collect();
         let card = card_with_channel()
             .with_file(&[FILE], content.clone())
             .overstating_length(&[FILE], 200);
-        assert_eq!(read_under_channel(card), content[..MAX_READ_CHUNK]);
+        assert_eq!(read_under_channel(card), content);
+    }
+
+    #[test]
+    fn drops_data_a_secure_channel_did_not_authenticate() {
+        let content: Vec<u8> = (0..=255).cycle().take(300).collect();
+        let card = card_with_channel()
+            .with_file(&[FILE], content)
+            .answering_a_read_unauthenticated_with(0x6282);
+        assert_eq!(read_under_channel(card), []);
     }
 
     #[test]

@@ -164,7 +164,10 @@ impl SecureMessaging {
         }
         self.ssc = self.ssc.wrapping_add(1);
         if !response.status.is_success() {
-            return Ok(response.clone());
+            return Ok(Response {
+                data: Vec::new(),
+                status: response.status,
+            });
         }
 
         let objects = &response.data[..];
@@ -188,8 +191,8 @@ impl SecureMessaging {
 
         let status = StatusWord(u16::from_be_bytes([sw1, sw2]));
         let data = match cryptogram {
-            Some(cryptogram) if status.is_success() => self.decrypt(cryptogram)?,
-            _ => Vec::new(),
+            Some(cryptogram) => self.decrypt(cryptogram)?,
+            None => Vec::new(),
         };
         Ok(Response { data, status })
     }
@@ -542,10 +545,11 @@ mod tests {
     }
 
     #[test]
-    fn returns_plain_error_status_as_is() {
+    fn returns_plain_error_status_without_its_data() {
         let mut channel = answered_session();
-        let response = channel.unprotect(&protected_response("6982")).unwrap();
+        let response = channel.unprotect(&protected_response("0102 6982")).unwrap();
         assert_eq!(response.status, StatusWord(0x6982));
+        assert_eq!(response.data, []);
         assert_eq!(channel.ssc, 0xd31a_c8ec_7ba0_fe76);
     }
 

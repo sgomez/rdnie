@@ -79,10 +79,11 @@ pub struct EmulatedDnie {
     fault: Option<Fault>,
     master_file_answer: Vec<u8>,
     handshake_fault: Option<HandshakeFault>,
+    unauthenticated_read: Option<u16>,
 }
 
 /// A step of the handshake the card fails.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HandshakeFault {
     /// Refuses `MSE SET` selecting the key that verifies the certificates.
     RefusingMseVerifyCertificate,
@@ -159,6 +160,7 @@ impl EmulatedDnie {
             fault: None,
             master_file_answer: Vec::new(),
             handshake_fault: None,
+            unauthenticated_read: None,
         }
     }
 
@@ -253,8 +255,7 @@ impl EmulatedDnie {
     }
 
     fn faulty(&self, fault: HandshakeFault) -> bool {
-        self.handshake_fault
-            .is_some_and(|set| std::mem::discriminant(&set) == std::mem::discriminant(&fault))
+        self.handshake_fault == Some(fault)
     }
 
     /// Resets the card on the next protected command, which the transport reports.
@@ -272,6 +273,12 @@ impl EmulatedDnie {
     /// Corrupts the MAC of the next protected response.
     pub fn corrupting_a_response_mac(mut self) -> Self {
         self.fault = Some(Fault::BadResponseMac);
+        self
+    }
+
+    /// Answers the next protected `READ BINARY` with its plain data under the outer `status`.
+    pub fn answering_a_read_unauthenticated_with(mut self, status: u16) -> Self {
+        self.unauthenticated_read = Some(status);
         self
     }
 
@@ -412,7 +419,12 @@ impl EmulatedDnie {
             self.delivery = delivery;
             answer
         };
-        let response = channel.wrap(&answer);
+        let mut response = channel.wrap(&answer);
+        if inner.ins == READ_BINARY
+            && let Some(status) = self.unauthenticated_read.take()
+        {
+            response = with_status(answer[..answer.len() - 2].to_vec(), status);
+        }
         match self.channel {
             Some(_) => self.mark_last_handshake_inside_channel(),
             None => self.channel = Some(channel),
