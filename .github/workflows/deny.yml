@@ -1,0 +1,24 @@
+name: Deny
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  push:
+    branches: [main]
+    paths: ['Cargo.toml', 'Cargo.lock', 'deny.toml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'deny.toml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-deny,just
+      - run: just deny

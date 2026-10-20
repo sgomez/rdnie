@@ -1,0 +1,16 @@
+[advisories]
+yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "no patch yet; the only private key is the CWA-14890 terminal key shipped in the crate, used locally with blinding" },
+]
+
+[licenses]
+allow = ["Apache-2.0", "BSD-3-Clause", "EUPL-1.2", "MIT", "Unicode-3.0", "Zlib"]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
