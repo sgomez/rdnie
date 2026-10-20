@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::Error;
+use crate::{Error, standard_error_codes};
 
 /// ISO 7816-4 command in short format, the only one the DNIe uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,7 +60,11 @@ impl StatusWord {
 
 impl fmt::Display for StatusWord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:02X} {:02X}", self.0 >> 8, self.0 & 0xFF)
+        let code = format!("{:02X} {:02X}", self.0 >> 8, self.0 & 0xFF);
+        match standard_error_codes::describe(self.0) {
+            Some(description) => write!(f, "{description} ({code})"),
+            None => f.write_str(&code),
+        }
     }
 }
 
@@ -176,6 +180,20 @@ mod tests {
             .unwrap()
             .into_success()
             .unwrap_err();
-        assert_eq!(error.to_string(), "card answered 6A 82");
+        assert_eq!(error.to_string(), "card answered file not found (6A 82)");
+    }
+
+    #[test]
+    fn describes_a_known_status_word_before_its_code() {
+        assert_eq!(
+            StatusWord(0x6982).to_string(),
+            "security status not satisfied (69 82)"
+        );
+    }
+
+    #[test]
+    fn shows_only_the_code_of_an_undescribed_status_word() {
+        assert_eq!(StatusWord(0x6300).to_string(), "63 00");
+        assert_eq!(StatusWord::SUCCESS.to_string(), "90 00");
     }
 }
