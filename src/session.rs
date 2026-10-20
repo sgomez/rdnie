@@ -93,13 +93,14 @@ impl<T: Transport> Session<T> {
         })
     }
 
-    /// Lists the holder's certificates that have a private key, without a PIN.
+    /// Lists the holder's certificates that have a private key, each with its PKCS#15 label,
+    /// without a PIN.
     ///
     /// # Errors
     ///
     /// Those of [`Session::open`], [`Error::Status`] if a file cannot be read and
     /// [`Error::MalformedPkcs15`] if a directory cannot be decoded, a certificate has no file in
-    /// its path or its bytes are not an X.509 certificate.
+    /// its path, no UTF-8 label, or its bytes are not an X.509 certificate.
     pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
         operation(&mut self.transport, certificates::load)
     }
