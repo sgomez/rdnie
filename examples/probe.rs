@@ -1,5 +1,6 @@
 //! Manual probe for the card's holder: prints ATR, status words, labels, counts and pass/fail only;
 //! `--verbose` also prints the holder's data, which must never leave the machine.
+//! `--list` prints the reader names and stops; `--reader <name>` connects to that reader.
 
 use rdnie::{
     Certificate, Error, HashAlgorithm, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration, PcscTransport,
@@ -20,7 +21,21 @@ fn main() {
 }
 
 fn run() -> Result<(), Error> {
-    let transport = PcscTransport::connect_first_dnie()?;
+    let arguments: Vec<String> = std::env::args().collect();
+    if arguments.iter().any(|argument| argument == "--list") {
+        for reader in PcscTransport::readers()? {
+            println!("reader: {reader}");
+        }
+        return Ok(());
+    }
+    let transport = match arguments.iter().position(|argument| argument == "--reader") {
+        Some(index) => {
+            let name = arguments.get(index + 1).ok_or(Error::NoReader)?;
+            PcscTransport::connect(name)?
+        }
+        None => PcscTransport::connect_first_dnie()?,
+    };
+    println!("reader: {}", transport.reader());
     let atr = transport.atr()?;
     println!("{}", describe_atr(&atr));
 
