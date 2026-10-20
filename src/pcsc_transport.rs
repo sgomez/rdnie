@@ -40,11 +40,14 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-use std::ffi::CString;
+use std::{
+    ffi::{CStr, CString},
+    time::Duration,
+};
 
 use pcsc::{
-    Attribute, Card, Context, Disposition, MAX_BUFFER_SIZE, Protocol, Protocols, Scope, ShareMode,
-    Transaction,
+    Attribute, Card, Context, Disposition, MAX_BUFFER_SIZE, Protocol, Protocols, ReaderState,
+    Scope, ShareMode, State, Transaction,
 };
 
 use crate::{Error, Transport, is_dnie};
@@ -237,6 +240,7 @@ fn reopen<C>(
 impl Transport for PcscTransport {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         let result = transmit(self.card.card()?, apdu);
+        let result = removed_if_empty(result, || reader_empty(&self.context, &self.reader));
         recovering(result, || reconnect(&mut self.card))
     }
 
@@ -256,8 +260,27 @@ impl Transport for PcscTransport {
         body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
     ) -> Result<R, Error> {
         let result = in_transaction(self.card.card_mut()?, body);
+        let result = removed_if_empty(result, || reader_empty(&self.context, &self.reader));
         recovering(result, || reconnect(&mut self.card))
     }
+}
+
+/// Some PC/SC stacks answer a pulled card with another code, such as macOS with
+/// `SCARD_E_NOT_TRANSACTED`.
+fn removed_if_empty<R>(result: Result<R, Error>, empty: impl FnOnce() -> bool) -> Result<R, Error> {
+    match result {
+        Err(Error::Transport(_)) if empty() => Err(Error::CardRemoved),
+        result => result,
+    }
+}
+
+/// Asks the context, since the card's handle may no longer answer.
+fn reader_empty(context: &Context, reader: &CStr) -> bool {
+    let mut states = [ReaderState::new(reader, State::UNAWARE)];
+    context
+        .get_status_change(Duration::ZERO, &mut states)
+        .is_ok()
+        && states[0].event_state().contains(State::EMPTY)
 }
 
 fn in_transaction<R>(
@@ -409,6 +432,26 @@ mod tests {
             connected(pcsc::Error::NoSmartcard),
             Error::CardRemoved
         ));
+    }
+
+    #[test]
+    fn reports_a_transport_failure_with_an_empty_reader_as_a_removed_card() {
+        let result =
+            removed_if_empty::<()>(Err(Error::Transport("not transacted".into())), || true);
+        assert!(matches!(result, Err(Error::CardRemoved)));
+    }
+
+    #[test]
+    fn keeps_a_transport_failure_while_the_card_is_present() {
+        let result =
+            removed_if_empty::<()>(Err(Error::Transport("not transacted".into())), || false);
+        assert!(matches!(result, Err(Error::Transport(_))));
+    }
+
+    #[test]
+    fn checks_the_reader_only_after_a_transport_failure() {
+        let result = removed_if_empty(Err::<(), _>(Error::CardReset), || unreachable!());
+        assert!(matches!(result, Err(Error::CardReset)));
     }
 
     #[test]
