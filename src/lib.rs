@@ -25,7 +25,7 @@ mod transport;
 
 pub use apdu::{Command, Response, StatusWord};
 pub use atr::is_dnie;
-pub use certificates::{Certificate, KeyReference};
+pub use certificates::{Certificate, INTERMEDIATE_CA_LABEL, KeyReference};
 pub use error::Error;
 pub use key_sets::KeyGeneration;
 #[cfg(feature = "pcsc")]

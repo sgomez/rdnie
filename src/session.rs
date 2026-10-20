@@ -113,6 +113,22 @@ impl<T: Transport> Session<T> {
             .collect())
     }
 
+    /// Fetches the DER of the CDF certificate labelled `label`, with or without a private key,
+    /// from the certificates [`Session::certificates`] shares. `None` if no certificate has that
+    /// label; with duplicates the last one in the CDF wins.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Session::certificates`].
+    pub fn certificate(&mut self, label: &str) -> Result<Option<Vec<u8>>, Error> {
+        Ok(self
+            .loaded()?
+            .iter()
+            .rev()
+            .find(|loaded| loaded.label == label)
+            .map(|loaded| loaded.der.clone()))
+    }
+
     fn loaded(&mut self) -> Result<&[certificates::Loaded], Error> {
         if self.loaded.is_none() {
             self.loaded = Some(operation(&mut self.transport, certificates::load)?);
@@ -326,6 +342,37 @@ pub(crate) mod tests {
             |list: &[crate::Certificate]| list.iter().map(|c| c.der.clone()).collect::<Vec<_>>();
         assert_eq!(ders(&first), ders(&second));
         assert_eq!(first.len(), 2);
+    }
+
+    #[test]
+    fn a_fetch_after_a_listing_sends_nothing_to_the_card() {
+        let mut session = open(listed_card());
+        session.certificates().unwrap();
+        let sent = session.transport.commands();
+        assert!(session.certificate("CertFirma").unwrap().is_some());
+        assert_eq!(session.transport.commands(), sent);
+    }
+
+    #[test]
+    fn a_fetch_as_the_first_call_loads_the_certificates() {
+        let mut session = open(listed_card());
+        let sent = session.transport.commands();
+        assert!(session.certificate("CertFirma").unwrap().is_some());
+        assert!(session.transport.commands() > sent);
+    }
+
+    #[test]
+    fn a_failed_fetch_is_retried_on_the_next_call() {
+        let mut session =
+            Session::open_with_roots(Unplugged(listed_card(), false), ComponentRoots::embedded())
+                .unwrap();
+        session.transport.1 = true;
+        assert!(matches!(
+            session.certificate("CertFirma"),
+            Err(Error::Transport(_))
+        ));
+        session.transport.1 = false;
+        assert!(session.certificate("CertFirma").unwrap().is_some());
     }
 
     #[test]
