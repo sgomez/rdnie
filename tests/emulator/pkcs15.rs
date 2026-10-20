@@ -63,6 +63,11 @@ impl HolderCertificate {
         }
     }
 
+    /// A self-signed X.509 certificate issued to `subject`.
+    pub fn with_subject(id: u8, subject: Name) -> Self {
+        Self::with_der(id, x509_der_of(id, subject))
+    }
+
     /// A certificate whose bytes are DER-shaped but not X.509.
     pub fn not_x509(id: u8, length: usize) -> Self {
         Self::with_der(id, fake_der(id, length))
@@ -228,6 +233,13 @@ fn fake_der(seed: u8, length: usize) -> Vec<u8> {
 }
 
 fn x509_der(id: u8, common_name: &str) -> Vec<u8> {
+    x509_der_of(
+        id,
+        Name::from_str(&format!("CN=Test holder{common_name}")).unwrap(),
+    )
+}
+
+fn x509_der_of(id: u8, subject: Name) -> Vec<u8> {
     let key = HOLDER_KEY.clone();
     let spki = SubjectPublicKeyInfoOwned::from_der(
         key.to_public_key().to_public_key_der().unwrap().as_bytes(),
@@ -238,7 +250,7 @@ fn x509_der(id: u8, common_name: &str) -> Vec<u8> {
         Profile::Root,
         SerialNumber::from(u32::from(id)),
         Validity::from_now(Duration::from_secs(3600)).unwrap(),
-        Name::from_str(&format!("CN=Test holder{common_name}")).unwrap(),
+        subject,
         spki,
         &signer,
     )
