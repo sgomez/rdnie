@@ -14,7 +14,7 @@ Ordered by importance.
 
 1. **The intermediate CA certificate is discarded** (spec #34). Java hides keyless CDF certificates from `getAliases` but keeps them reachable by alias; the JSE provider uses `CertCAIntermediaDGP` to build the signing chain (Dnie.java:942, `jmulticard-jse` DnieKeyStoreImpl.java:80). rdnie reads it and drops it (`certificates.rs` `load`), so a consumer cannot embed the chain.
 2. **No certificate label or role** (spec #34). `CertificateObject.getAlias` (CertificateObject.java:150) and `Dnie.getAliases` (Dnie.java:429) tell the authentication certificate from the signing one. rdnie exposes neither; callers parse X.509 KeyUsage (`examples/probe.rs`).
-3. **Coarse error taxonomy** (spec #35). "No reader", "no card" and "card removed" surface as `Error::Transport(String)` or `Error::NoDnie`, indistinguishable from "card is not a DNIe". Java has `NoReadersFoundException`, `CardNotPresentException` and `InvalidCardException` (SIC:280, :298; DnieFactory.java:312). `Error` is not `#[non_exhaustive]` (`error.rs`), so adding variants later is a breaking change.
+3. **Coarse error taxonomy** (spec #35): closed. `Error` is `#[non_exhaustive]` and has `NoReader`, `NoCard` and `CardRemoved`; `connect_first_dnie` reports them with `DnieFactory.getDnie`'s precedence (DnieFactory.java:312).
 4. **`PcscTransport::reset` can panic afterwards** (spec #35). It disconnects (leaving `Connection(None)`) and returns early if the reconnect fails; the next `transmit_raw`, `atr`, `transaction` or `reset` panics in `Deref::expect`. Java throws `ApduConnectionException` (SIC:322-340). Reachable only when a consumer calls `Transport::reset` directly.
 5. **No reader listing or selection, and no recovery after removal** (spec #35). Java has `getTerminals`, `getTerminalInfo`, `setTerminal` (SIC:165, :231, :372); rdnie always takes the first reader with a DNIe ATR. After `RemovedCard` the transport stays dead (it only reconnects on `CardReset`), which is undocumented.
 6. **Response parsing is stricter than Java's** (spec #36). rdnie rejects bytes after `8E`, a `99` value that is not 2 bytes, and an `87` cryptogram not starting with `01` (`secure_messaging.rs` `unprotect`, `decrypt`); `ApduEncrypterDes.decryptResponseApdu` accepts them. Confirm with the manual real-card probe that a DNIe 3.0/4.0 never sends them.
@@ -148,13 +148,13 @@ All "Left out" items hold for a signing driver: PACE/NFC (including the in-chann
 | EnvelopeDataApduCommand (`90 C2`) | — | Out of scope | |
 | ApduConnection.getTerminals / getTerminalInfo / setTerminal | — | Missing | Gap 5. |
 | SIC ignoreVirtualReaders | `connect_first_dnie` ATR filter | Diff | |
-| SIC.open: `NoReadersFoundException`, `CardNotPresentException` | `Error::Transport`, `Error::NoDnie` | Missing | Gap 3. |
+| SIC.open: `NoReadersFoundException`, `CardNotPresentException` | `Error::NoReader`, `Error::NoCard`, `pcsc_transport.rs` `first_dnie` | Impl | |
 | SIC protocol `*`, negotiated protocol kept | `Protocols::ANY`, `negotiated` | Impl | |
 | SIC.setExclusiveUse | `PcscTransport::transaction` | Intentional | One transaction per operation. |
 | SIC.reset | `PcscTransport::reset` | Diff | Gap 4. |
 | SIC.close LEAVE_CARD | `Connection` `Drop` | Impl | |
 | `SCARD_W_RESET_CARD` → LostChannelException | `Error::CardReset`, `recovering` | Impl | |
-| Card removed mid-operation | `Error::Transport` | Diff | Gaps 3 and 5. |
+| Card removed mid-operation | `Error::CardRemoved` | Diff | Gap 5. |
 | InvalidCardException, BurnedDnieCardException | `Error::NotDnie`, `Error::BurnedDnie` | Impl | |
 | DnieCardException, CryptoCardException | `Error::Status` | Impl | |
 | Timeouts | — | Impl | Neither side sets them. |

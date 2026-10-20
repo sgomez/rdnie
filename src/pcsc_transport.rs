@@ -64,39 +64,75 @@ impl PcscTransport {
     ///
     /// # Errors
     ///
-    /// [`Error::Transport`] if PC/SC fails and [`Error::NoDnie`] if no reader holds a DNIe.
+    /// Reads each reader's ATR without resetting the card, and takes the first reader whose
+    /// ATR is a DNIe, burned ones included, as `DnieFactory.getDnie` does.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoReader`] if the system has no reader, [`Error::NotDnie`] if a reader holds a
+    /// card that is not a DNIe, [`Error::NoCard`] if every reader is empty, and otherwise
+    /// [`Error::Transport`] with the first PC/SC failure.
     pub fn connect_first_dnie() -> Result<Self, Error> {
-        let context = Context::establish(Scope::User).map_err(transport)?;
-        let readers = context.list_readers_owned().map_err(transport)?;
-        let mut failure = None;
-        for reader in readers {
-            let attempt = context
-                .connect(&reader, ShareMode::Shared, Protocols::ANY)
-                .map(|card| Connection(Some(card)))
-                .and_then(|card| pcsc_atr(&card).map(|atr| (card, atr)));
-            match attempt {
-                Ok((card, atr)) if is_dnie(&atr) => {
-                    return Ok(Self {
-                        context,
-                        reader,
-                        card,
-                    });
-                }
-                Ok(_) | Err(pcsc::Error::NoSmartcard | pcsc::Error::RemovedCard) => {}
-                Err(error) => failure = failure.or(Some(error)),
-            }
-        }
-        Err(failure.map_or(Error::NoDnie, transport))
+        let context = Context::establish(Scope::User).map_err(connecting)?;
+        let readers = context.list_readers_owned().map_err(connecting)?;
+        let (reader, card) = first_dnie(readers.into_iter().map(|reader| probe(&context, reader)))?;
+        Ok(Self {
+            context,
+            reader,
+            card,
+        })
     }
 
     /// The card's current ATR.
     ///
     /// # Errors
     ///
-    /// [`Error::Transport`] if PC/SC cannot read it.
+    /// [`Error::CardRemoved`] if the card left the reader, [`Error::CardReset`] if it was reset,
+    /// and [`Error::Transport`] if PC/SC fails otherwise.
     pub fn atr(&self) -> Result<Vec<u8>, Error> {
         atr(&self.card)
     }
+}
+
+/// What connecting to one reader found.
+enum Probe<C> {
+    Card(C, Vec<u8>),
+    Empty,
+    Failed(pcsc::Error),
+}
+
+fn probe(context: &Context, reader: CString) -> Probe<(CString, Connection)> {
+    let attempt = context
+        .connect(&reader, ShareMode::Shared, Protocols::ANY)
+        .map(|card| Connection(Some(card)))
+        .and_then(|card| pcsc_atr(&card).map(|atr| (card, atr)));
+    match attempt {
+        Ok((card, atr)) => Probe::Card((reader, card), atr),
+        Err(pcsc::Error::NoSmartcard | pcsc::Error::RemovedCard) => Probe::Empty,
+        Err(error) => Probe::Failed(error),
+    }
+}
+
+/// The first card with a DNIe ATR, or the error `DnieFactory.getDnie` gives for the readers.
+fn first_dnie<C>(probes: impl IntoIterator<Item = Probe<C>>) -> Result<C, Error> {
+    let mut readers = 0;
+    let mut wrong_card = false;
+    let mut failure = None;
+    for probe in probes {
+        readers += 1;
+        match probe {
+            Probe::Card(card, atr) if is_dnie(&atr) => return Ok(card),
+            Probe::Card(..) => wrong_card = true,
+            Probe::Empty => {}
+            Probe::Failed(error) => failure = failure.or(Some(error)),
+        }
+    }
+    Err(match failure {
+        _ if readers == 0 => Error::NoReader,
+        _ if wrong_card => Error::NotDnie,
+        None => Error::NoCard,
+        Some(error) => Error::Transport(error.to_string()),
+    })
 }
 
 /// Card handle that disconnects with `LeaveCard`, as `SmartcardIoConnection.close` does.
@@ -150,7 +186,7 @@ impl Transport for PcscTransport {
         let card = self
             .context
             .connect(&self.reader, ShareMode::Shared, protocol)
-            .map_err(transport)?;
+            .map_err(connecting)?;
         self.card = Connection(Some(card));
         atr(&self.card)
     }
@@ -168,12 +204,12 @@ fn in_transaction<R>(
     card: &mut Card,
     body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
 ) -> Result<R, Error> {
-    let mut transaction = InTransaction(card.transaction().map_err(transport)?);
+    let mut transaction = InTransaction(card.transaction().map_err(connected)?);
     let result = body(&mut transaction);
     let ended = transaction
         .0
         .end(Disposition::LeaveCard)
-        .map_err(|(_, error)| transport(error));
+        .map_err(|(_, error)| connected(error));
     outcome(result, ended)
 }
 
@@ -233,21 +269,29 @@ impl Transport for InTransaction<'_> {
 
 fn transmit(card: &Card, apdu: &[u8]) -> Result<Vec<u8>, Error> {
     let mut buffer = [0; MAX_BUFFER_SIZE];
-    let response = card.transmit(apdu, &mut buffer).map_err(transport)?;
+    let response = card.transmit(apdu, &mut buffer).map_err(connected)?;
     Ok(response.to_vec())
 }
 
 fn atr(card: &Card) -> Result<Vec<u8>, Error> {
-    pcsc_atr(card).map_err(transport)
+    pcsc_atr(card).map_err(connected)
 }
 
 fn pcsc_atr(card: &Card) -> Result<Vec<u8>, pcsc::Error> {
     card.get_attribute_owned(Attribute::AtrString)
 }
 
-#[allow(clippy::needless_pass_by_value)]
-fn transport(error: pcsc::Error) -> Error {
+fn connecting(error: pcsc::Error) -> Error {
     match error {
+        pcsc::Error::NoReadersAvailable | pcsc::Error::UnknownReader => Error::NoReader,
+        pcsc::Error::NoSmartcard => Error::NoCard,
+        error => Error::Transport(error.to_string()),
+    }
+}
+
+fn connected(error: pcsc::Error) -> Error {
+    match error {
+        pcsc::Error::RemovedCard | pcsc::Error::NoSmartcard => Error::CardRemoved,
         pcsc::Error::ResetCard => Error::CardReset,
         error => Error::Transport(error.to_string()),
     }
@@ -260,8 +304,48 @@ mod tests {
     #[test]
     fn reports_card_reset_as_its_own_error() {
         assert!(matches!(
-            transport(pcsc::Error::ResetCard),
+            connected(pcsc::Error::ResetCard),
             Error::CardReset
+        ));
+    }
+
+    #[test]
+    fn reports_a_missing_reader_while_connecting() {
+        assert!(matches!(
+            connecting(pcsc::Error::NoReadersAvailable),
+            Error::NoReader
+        ));
+        assert!(matches!(
+            connecting(pcsc::Error::UnknownReader),
+            Error::NoReader
+        ));
+    }
+
+    #[test]
+    fn reports_an_empty_reader_while_connecting() {
+        assert!(matches!(
+            connecting(pcsc::Error::NoSmartcard),
+            Error::NoCard
+        ));
+    }
+
+    #[test]
+    fn reports_other_failures_while_connecting_as_transport_errors() {
+        assert!(matches!(
+            connecting(pcsc::Error::SharingViolation),
+            Error::Transport(_)
+        ));
+    }
+
+    #[test]
+    fn reports_a_removed_card_while_connected() {
+        assert!(matches!(
+            connected(pcsc::Error::RemovedCard),
+            Error::CardRemoved
+        ));
+        assert!(matches!(
+            connected(pcsc::Error::NoSmartcard),
+            Error::CardRemoved
         ));
     }
 
@@ -286,13 +370,81 @@ mod tests {
         };
         assert!(reconnects(Err(Error::CardReset)));
         assert!(!reconnects(Err(Error::ChannelLost)));
+        assert!(!reconnects(Err(Error::CardRemoved)));
         assert!(!reconnects(Ok(())));
     }
 
+    const DNIE_3: [u8; 20] = [
+        0x3B, 0x7F, 0x96, 0x00, 0x00, 0x00, 0x6A, 0x44, 0x4E, 0x49, 0x65, 0x10, 0x01, 0x01, 0x55,
+        0x04, 0x21, 0x03, 0x90, 0x00,
+    ];
+
+    const BURNED_DNIE: [u8; 20] = [
+        0x3B, 0x7F, 0x96, 0x00, 0x00, 0x00, 0x6A, 0x44, 0x4E, 0x49, 0x65, 0x10, 0x01, 0x01, 0x55,
+        0x04, 0x21, 0x03, 0x65, 0x81,
+    ];
+
+    const OTHER_CARD: [u8; 4] = [0x3B, 0x02, 0x14, 0x50];
+
+    fn card(reader: &str, atr: &[u8]) -> Probe<String> {
+        Probe::Card(reader.to_owned(), atr.to_vec())
+    }
+
     #[test]
-    fn reports_other_failures_as_transport_errors() {
+    fn scanning_no_readers_finds_no_reader() {
+        assert!(matches!(first_dnie::<String>([]), Err(Error::NoReader)));
+    }
+
+    #[test]
+    fn scanning_takes_the_reader_with_a_dnie() {
+        let scan = first_dnie([card("A", &DNIE_3)]);
+        assert_eq!(scan.ok().as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn scanning_takes_a_burned_dnie_so_the_session_reports_it() {
+        let scan = first_dnie([Probe::Empty, card("B", &BURNED_DNIE)]);
+        assert_eq!(scan.ok().as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn scanning_prefers_a_wrong_card_over_an_empty_reader() {
+        let scan = first_dnie([Probe::Empty, card("B", &OTHER_CARD), Probe::Empty]);
+        assert!(matches!(scan, Err(Error::NotDnie)));
+    }
+
+    #[test]
+    fn scanning_only_empty_readers_finds_no_card() {
+        let scan = first_dnie::<String>([Probe::Empty, Probe::Empty]);
+        assert!(matches!(scan, Err(Error::NoCard)));
+    }
+
+    #[test]
+    fn scanning_reports_the_first_failure_when_no_card_is_found() {
+        let scan = first_dnie::<String>([
+            Probe::Empty,
+            Probe::Failed(pcsc::Error::SharingViolation),
+            Probe::Failed(pcsc::Error::ReaderUnavailable),
+        ]);
+        let Err(Error::Transport(message)) = scan else {
+            panic!("expected a transport error, got {scan:?}");
+        };
+        assert_eq!(message, pcsc::Error::SharingViolation.to_string());
+    }
+
+    #[test]
+    fn scanning_takes_a_dnie_after_a_failing_reader() {
+        let scan = first_dnie([
+            Probe::Failed(pcsc::Error::SharingViolation),
+            card("B", &DNIE_3),
+        ]);
+        assert_eq!(scan.ok().as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn reports_other_failures_while_connected_as_transport_errors() {
         assert!(matches!(
-            transport(pcsc::Error::NoSmartcard),
+            connected(pcsc::Error::SharingViolation),
             Error::Transport(_)
         ));
     }

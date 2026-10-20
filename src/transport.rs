@@ -51,8 +51,8 @@ pub trait Transport {
     ///
     /// # Errors
     ///
-    /// [`Error::Transport`] if the APDU does not reach the card and [`Error::CardReset`] if the
-    /// card was reset since the last command.
+    /// [`Error::Transport`] if the APDU does not reach the card, [`Error::CardReset`] if the
+    /// card was reset since the last command and [`Error::CardRemoved`] if it left the reader.
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error>;
 
     /// Resets the card and returns its ATR.
@@ -66,8 +66,9 @@ pub trait Transport {
     ///
     /// # Errors
     ///
-    /// Those of `body`, [`Error::Transport`] if the transaction cannot start or end and
-    /// [`Error::CardReset`] if the card was reset before it started.
+    /// Those of `body`, [`Error::Transport`] if the transaction cannot start or end,
+    /// [`Error::CardReset`] if the card was reset before it started and [`Error::CardRemoved`]
+    /// if it left the reader.
     fn transaction<R>(
         &mut self,
         body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
