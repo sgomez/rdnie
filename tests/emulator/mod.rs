@@ -13,7 +13,7 @@ use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 
 use channel::CardChannel;
 use chip::Chip;
-pub use chip::{Handshake, TerminalKey};
+pub use chip::{Handshake, TerminalKey, component_root_public_key};
 pub use pkcs15::HolderCertificate;
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
@@ -37,6 +37,7 @@ const PROTECTED: u8 = 0x0C;
 const MASTER_FILE_NAME: &[u8] = b"Master.File";
 const IDESP: [u8; 2] = [0x00, 0x06];
 const ICC_CERTIFICATE: [u8; 2] = [0x60, 0x1F];
+const INTERMEDIATE_CERTIFICATE: [u8; 2] = [0x60, 0x20];
 const DEFAULT_RETRIES: u8 = 3;
 /// PIN of every emulated card unless a test sets another.
 pub const DEFAULT_PIN: &str = "TestPin1";
@@ -136,9 +137,33 @@ impl EmulatedDnie {
 
     /// Lets the card open a CWA-14890 channel with any of `terminals`.
     pub fn with_secure_channel(self, terminals: &[TerminalKey]) -> Self {
-        let mut card = self.with_file(&[ICC_CERTIFICATE], chip::component_certificate());
+        let mut card = self
+            .with_file(&[ICC_CERTIFICATE], chip::component_certificate())
+            .with_file(
+                &[INTERMEDIATE_CERTIFICATE],
+                chip::intermediate_certificate(),
+            );
         card.chip = Some(Chip::new(terminals));
         card
+    }
+
+    /// Stores a component certificate that the test CA did not sign.
+    pub fn with_untrusted_component_certificate(self) -> Self {
+        self.with_file(&[ICC_CERTIFICATE], chip::foreign_component_certificate())
+    }
+
+    /// Stores a CA certificate that the test root did not sign.
+    pub fn with_untrusted_intermediate_certificate(self) -> Self {
+        self.with_file(
+            &[INTERMEDIATE_CERTIFICATE],
+            chip::foreign_intermediate_certificate(),
+        )
+    }
+
+    /// Drops the CA certificate from `3F00/6020`.
+    pub fn without_intermediate_certificate(mut self) -> Self {
+        self.files.remove([INTERMEDIATE_CERTIFICATE].as_slice());
+        self
     }
 
     /// How many INTERNAL AUTHENTICATE commands the card received.

@@ -1,5 +1,5 @@
 //! Card side of the CWA-14890 mutual authentication, with an ICC key pair and component
-//! certificate generated at test time.
+//! certificate chain generated at test time.
 
 use std::{str::FromStr, sync::LazyLock, time::Duration};
 
@@ -64,32 +64,60 @@ pub struct Handshake {
 }
 
 struct Pki {
+    root: RsaPublicKey,
     icc: RsaPrivateKey,
+    intermediate_certificate: Vec<u8>,
     component_certificate: Vec<u8>,
+    foreign_intermediate_certificate: Vec<u8>,
+    foreign_component_certificate: Vec<u8>,
 }
 
 static PKI: LazyLock<Pki> = LazyLock::new(|| {
-    let ca = RsaPrivateKey::new(&mut OsRng, KEY_LENGTH * 8).unwrap();
-    let icc = RsaPrivateKey::new(&mut OsRng, KEY_LENGTH * 8).unwrap();
+    let [root, other_root, intermediate, other_intermediate, icc] =
+        std::array::from_fn(|_| RsaPrivateKey::new(&mut OsRng, KEY_LENGTH * 8).unwrap());
+    let intermediate_public = intermediate.to_public_key();
+    let icc_public = icc.to_public_key();
     Pki {
-        component_certificate: issue(&ca, &icc.to_public_key()),
+        root: root.to_public_key(),
+        intermediate_certificate: issue(&root, ROOT, INTERMEDIATE, &intermediate_public),
+        component_certificate: issue(&intermediate, INTERMEDIATE, ICC, &icc_public),
+        foreign_intermediate_certificate: issue(
+            &other_root,
+            ROOT,
+            INTERMEDIATE,
+            &intermediate_public,
+        ),
+        foreign_component_certificate: issue(&other_intermediate, INTERMEDIATE, ICC, &icc_public),
         icc,
     }
 });
 
-fn issue(ca: &RsaPrivateKey, icc: &RsaPublicKey) -> Vec<u8> {
-    let signer = SigningKey::<Sha256>::new(ca.clone());
+const ROOT: &str = "CN=Test component root,OU=AC RAIZ COMPONENTES,C=ES";
+const INTERMEDIATE: &str = "CN=Test component CA,C=ES";
+const ICC: &str = "CN=Test ICC";
+
+fn issue(issuer_key: &RsaPrivateKey, issuer: &str, subject: &str, key: &RsaPublicKey) -> Vec<u8> {
+    let signer = SigningKey::<Sha256>::new(issuer_key.clone());
     let spki =
-        SubjectPublicKeyInfoOwned::from_der(icc.to_public_key_der().unwrap().as_bytes()).unwrap();
-    CertificateBuilder::new(
+        SubjectPublicKeyInfoOwned::from_der(key.to_public_key_der().unwrap().as_bytes()).unwrap();
+    let issuer = Name::from_str(issuer).unwrap();
+    let profile = if subject == ICC {
         Profile::Leaf {
-            issuer: Name::from_str("CN=Test component CA").unwrap(),
+            issuer,
             enable_key_agreement: false,
             enable_key_encipherment: false,
-        },
+        }
+    } else {
+        Profile::SubCA {
+            issuer,
+            path_len_constraint: Some(0),
+        }
+    };
+    CertificateBuilder::new(
+        profile,
         SerialNumber::from(1_u32),
         Validity::from_now(Duration::from_secs(3600)).unwrap(),
-        Name::from_str("CN=Test ICC").unwrap(),
+        Name::from_str(subject).unwrap(),
         spki,
         &signer,
     )
@@ -103,6 +131,26 @@ fn issue(ca: &RsaPrivateKey, icc: &RsaPublicKey) -> Vec<u8> {
 /// The X.509 component certificate the card stores at `3F00/601F`, signed by the test CA.
 pub fn component_certificate() -> Vec<u8> {
     PKI.component_certificate.clone()
+}
+
+/// The test CA certificate the card stores at `3F00/6020`, signed by the test root.
+pub fn intermediate_certificate() -> Vec<u8> {
+    PKI.intermediate_certificate.clone()
+}
+
+/// A component certificate for the same ICC key, signed by a CA other than the test CA.
+pub fn foreign_component_certificate() -> Vec<u8> {
+    PKI.foreign_component_certificate.clone()
+}
+
+/// The test CA certificate, signed by a root other than the test root.
+pub fn foreign_intermediate_certificate() -> Vec<u8> {
+    PKI.foreign_intermediate_certificate.clone()
+}
+
+/// The public key of the test root the CA certificate chains to.
+pub fn component_root_public_key() -> RsaPublicKey {
+    PKI.root.clone()
 }
 
 /// Handshake state between the commands of one mutual authentication.

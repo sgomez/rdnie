@@ -62,23 +62,28 @@
 
 use rand_core::{OsRng, RngCore};
 use rsa::{
-    BigUint, RsaPrivateKey, RsaPublicKey,
+    BigUint, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey,
     hazmat::{rsa_decrypt_and_check, rsa_encrypt},
     pkcs8::DecodePublicKey,
     traits::PublicKeyParts,
 };
 use sha1::{Digest, Sha1};
-use x509_cert::der::{Decode, Encode, SliceReader};
+use sha2::Sha256;
+use x509_cert::{
+    Certificate,
+    der::{Decode, Encode, Header, Reader, SliceReader, asn1::ObjectIdentifier},
+};
 use zeroize::Zeroize;
 
 use crate::{
     Command, Error, Transport,
     files::{self, Location},
-    key_sets::{CA_PUBLIC_KEY_REFERENCE, ICC_PRIVATE_KEY_REFERENCE, KeySet},
+    key_sets::{CA_PUBLIC_KEY_REFERENCE, ComponentRoots, ICC_PRIVATE_KEY_REFERENCE, KeySet},
     secure_messaging::SecureMessaging,
 };
 
 const ICC_CERTIFICATE: &[u8] = &[0x3F, 0x00, 0x60, 0x1F];
+const COMPONENT_CA_CERTIFICATE: &[u8] = &[0x3F, 0x00, 0x60, 0x20];
 const SERIAL_LENGTH: usize = 8;
 const CHALLENGE_LENGTH: usize = 8;
 const SEED_LENGTH: usize = 32;
@@ -88,6 +93,18 @@ const FRAME_START: u8 = 0x6A;
 const FRAME_END: u8 = 0xBC;
 const MSE_SET: u8 = 0x22;
 
+const SHA1_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.5");
+const SHA256_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
+
+// DER DigestInfo headers of PKCS#1 v1.5 (RFC 8017, note 1 of section 9.2).
+const SHA1_DIGEST_INFO: &[u8] = &[
+    0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2B, 0x0E, 0x03, 0x02, 0x1A, 0x05, 0x00, 0x04, 0x14,
+];
+const SHA256_DIGEST_INFO: &[u8] = &[
+    0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+    0x00, 0x04, 0x20,
+];
+
 const INTERNAL_AUTHENTICATION_FAILED: Error =
     Error::SecureChannel("the card failed the internal authentication");
 const EXTERNAL_AUTHENTICATION_FAILED: Error =
@@ -95,9 +112,13 @@ const EXTERNAL_AUTHENTICATION_FAILED: Error =
 const RANDOM_FAILED: Error = Error::SecureChannel("the OS random generator failed");
 
 /// Authenticates card and terminal with `keys` and returns the channel they agree on.
-pub(crate) fn open(card: &mut dyn Transport, keys: &KeySet) -> Result<SecureMessaging, Error> {
+pub(crate) fn open(
+    card: &mut dyn Transport,
+    keys: &KeySet,
+    roots: &ComponentRoots,
+) -> Result<SecureMessaging, Error> {
     let serial = padded_serial(card)?;
-    let icc_key = icc_public_key(card)?;
+    let icc_key = icc_public_key(card, roots)?;
     verify_ifd_certificate_chain(card, keys)?;
 
     let rnd_ifd: [u8; CHALLENGE_LENGTH] = random()?;
@@ -119,21 +140,82 @@ fn padded_serial(card: &mut dyn Transport) -> Result<Vec<u8>, Error> {
     Ok(padded)
 }
 
-/// The public key of the X.509 component certificate, unverified as in `Dnie.verifyIcc`; any data
-/// after the certificate is ignored.
-fn icc_public_key(card: &mut dyn Transport) -> Result<RsaPublicKey, Error> {
-    const MALFORMED: Error = Error::SecureChannel("malformed component certificate");
-    let location = Location::new(ICC_CERTIFICATE).ok_or(MALFORMED)?;
-    let encoded = files::read(card, &location)?;
-    let certificate = SliceReader::new(&encoded)
-        .and_then(|mut reader| x509_cert::Certificate::decode(&mut reader))
-        .map_err(|_| MALFORMED)?;
-    let spki = certificate
-        .tbs_certificate
-        .subject_public_key_info
-        .to_der()
-        .map_err(|_| MALFORMED)?;
-    RsaPublicKey::from_public_key_der(&spki).map_err(|_| MALFORMED)
+/// The public key of the X.509 component certificate, once its chain to `roots` checks out as
+/// `cwa_verify_icc_certificates` of `OpenSC` checks it.
+fn icc_public_key(card: &mut dyn Transport, roots: &ComponentRoots) -> Result<RsaPublicKey, Error> {
+    let ca = read_certificate(card, COMPONENT_CA_CERTIFICATE)?;
+    let icc = read_certificate(card, ICC_CERTIFICATE)?;
+    let root = roots.for_issuer(&ca.certificate.tbs_certificate.issuer);
+    if !ca.is_signed_by(root) {
+        return Err(Error::SecureChannel(
+            "the component certificate chain is not signed by the DNIe root",
+        ));
+    }
+    if !icc.is_signed_by(&ca.public_key()?) {
+        return Err(Error::SecureChannel(
+            "the component certificate is not signed by its CA",
+        ));
+    }
+    icc.public_key()
+}
+
+const MALFORMED_CERTIFICATE: Error = Error::SecureChannel("malformed component certificate");
+
+/// An X.509 certificate with its `tbsCertificate` exactly as the card stores it.
+struct StoredCertificate {
+    certificate: Certificate,
+    tbs: Vec<u8>,
+}
+
+/// Reads the certificate at `path`; any data after it is ignored.
+fn read_certificate(card: &mut dyn Transport, path: &[u8]) -> Result<StoredCertificate, Error> {
+    let location = Location::new(path).ok_or(MALFORMED_CERTIFICATE)?;
+    let encoded = files::read(card, &location).map_err(|error| match error {
+        Error::Status(_) => Error::SecureChannel("the component certificate chain is missing"),
+        other => other,
+    })?;
+    decode_certificate(&encoded).ok_or(MALFORMED_CERTIFICATE)
+}
+
+fn decode_certificate(encoded: &[u8]) -> Option<StoredCertificate> {
+    let whole = SliceReader::new(encoded).ok()?.tlv_bytes().ok()?;
+    let certificate = Certificate::from_der(whole).ok()?;
+    let mut reader = SliceReader::new(whole).ok()?;
+    Header::decode(&mut reader).ok()?;
+    let tbs = reader.tlv_bytes().ok()?.to_vec();
+    Some(StoredCertificate { certificate, tbs })
+}
+
+impl StoredCertificate {
+    fn public_key(&self) -> Result<RsaPublicKey, Error> {
+        let spki = self
+            .certificate
+            .tbs_certificate
+            .subject_public_key_info
+            .to_der()
+            .map_err(|_| MALFORMED_CERTIFICATE)?;
+        RsaPublicKey::from_public_key_der(&spki).map_err(|_| MALFORMED_CERTIFICATE)
+    }
+
+    /// Whether `issuer` signed the stored TBS with PKCS#1 v1.5 and SHA-1 or SHA-256.
+    fn is_signed_by(&self, issuer: &RsaPublicKey) -> bool {
+        let oid = self.certificate.signature_algorithm.oid;
+        let (prefix, digest) = if oid == SHA1_WITH_RSA {
+            (SHA1_DIGEST_INFO, Sha1::digest(&self.tbs).to_vec())
+        } else if oid == SHA256_WITH_RSA {
+            (SHA256_DIGEST_INFO, Sha256::digest(&self.tbs).to_vec())
+        } else {
+            return false;
+        };
+        let Some(signature) = self.certificate.signature.as_bytes() else {
+            return false;
+        };
+        let scheme = Pkcs1v15Sign {
+            hash_len: Some(digest.len()),
+            prefix: prefix.into(),
+        };
+        issuer.verify(scheme, &digest, signature).is_ok()
+    }
 }
 
 /// Lets the card verify the CA CVC against its root key, then the terminal CVC against the CA.
@@ -296,7 +378,8 @@ fn send(
 #[cfg(test)]
 mod tests {
     use crate::{
-        Error,
+        Error, Session,
+        emulator::EmulatedDnie,
         session::tests::{card_with_channel, open},
     };
 
@@ -320,5 +403,55 @@ mod tests {
         };
         assert_ne!(first.rnd_ifd, second.rnd_ifd);
         assert_ne!(first.kifd, second.kifd);
+    }
+
+    #[test]
+    fn accepts_a_genuine_component_certificate_chain() {
+        let mut session = open(card_with_channel());
+        assert!(session.pin_retries().is_ok());
+        assert_eq!(session.into_transport().internal_authentications(), 1);
+    }
+
+    #[test]
+    fn refuses_a_component_certificate_the_ca_did_not_sign() {
+        refuses_before_authenticating(
+            open(card_with_channel().with_untrusted_component_certificate()),
+            "the component certificate is not signed by its CA",
+        );
+    }
+
+    #[test]
+    fn refuses_a_ca_certificate_the_root_did_not_sign() {
+        refuses_before_authenticating(
+            open(card_with_channel().with_untrusted_intermediate_certificate()),
+            NOT_FROM_THE_ROOT,
+        );
+    }
+
+    #[test]
+    fn refuses_a_card_without_the_ca_certificate() {
+        refuses_before_authenticating(
+            open(card_with_channel().without_intermediate_certificate()),
+            "the component certificate chain is missing",
+        );
+    }
+
+    #[test]
+    fn production_sessions_trust_only_the_embedded_roots() {
+        refuses_before_authenticating(
+            Session::open(card_with_channel()).unwrap(),
+            NOT_FROM_THE_ROOT,
+        );
+    }
+
+    const NOT_FROM_THE_ROOT: &str =
+        "the component certificate chain is not signed by the DNIe root";
+
+    fn refuses_before_authenticating(mut session: Session<EmulatedDnie>, reason: &str) {
+        assert!(matches!(
+            session.pin_retries(),
+            Err(Error::SecureChannel(message)) if message == reason
+        ));
+        assert_eq!(session.into_transport().internal_authentications(), 0);
     }
 }

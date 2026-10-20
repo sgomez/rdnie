@@ -50,7 +50,7 @@ use crate::{
     atr::check_dnie_3,
     certificates,
     files::{self, Location},
-    key_sets::KeyGeneration,
+    key_sets::{ComponentRoots, KeyGeneration},
     pin, signature,
 };
 
@@ -61,6 +61,7 @@ pub struct Session<T: Transport> {
     transport: T,
     /// Support number, which picks the channel key set; card data, so never logged.
     idesp: Option<String>,
+    roots: ComponentRoots,
 }
 
 impl<T: Transport> Session<T> {
@@ -70,10 +71,23 @@ impl<T: Transport> Session<T> {
     ///
     /// Those of [`Transport::transaction`], [`Transport::reset`], [`Error::NotDnie`],
     /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`].
-    pub fn open(mut transport: T) -> Result<Self, Error> {
+    pub fn open(transport: T) -> Result<Self, Error> {
+        Self::open_trusting(transport, ComponentRoots::embedded())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_with_roots(transport: T, roots: ComponentRoots) -> Result<Self, Error> {
+        Self::open_trusting(transport, roots)
+    }
+
+    fn open_trusting(mut transport: T, roots: ComponentRoots) -> Result<Self, Error> {
         check_dnie_3(&transport.reset()?)?;
         let idesp = transport.transaction(|card| Ok(read_idesp(card)))?;
-        Ok(Self { transport, idesp })
+        Ok(Self {
+            transport,
+            idesp,
+            roots,
+        })
     }
 
     /// Lists the holder's certificates that have a private key, without a PIN.
@@ -94,7 +108,10 @@ impl<T: Transport> Session<T> {
     /// authentication fails and [`Error::Status`] if the card gives no retry count.
     pub fn pin_retries(&mut self) -> Result<u8, Error> {
         let idesp = self.idesp.as_deref();
-        operation(&mut self.transport, |card| pin::retries_left(card, idesp))
+        let roots = &self.roots;
+        operation(&mut self.transport, |card| {
+            pin::retries_left(card, idesp, roots)
+        })
     }
 
     /// Signs a SHA-256/384/512 digest with `key` after verifying `pin`, and returns the PKCS#1
@@ -120,8 +137,9 @@ impl<T: Transport> Session<T> {
             return Err(Error::PinBlocked);
         }
         let idesp = self.idesp.as_deref();
+        let roots = &self.roots;
         operation(&mut self.transport, |card| {
-            let mut channel = pin::verify(card, idesp, pin, retries)?;
+            let mut channel = pin::verify(card, idesp, roots, pin, retries)?;
             signature::sign(&mut channel, card, key, digest_info)
         })
     }
@@ -165,8 +183,11 @@ pub(crate) mod tests {
 
     use crate::{
         Error, HashAlgorithm, KeyGeneration, Pin, StatusWord,
-        emulator::{DEFAULT_PIN, DNIE_3_ATR, EmulatedDnie, HolderCertificate, TerminalKey},
-        key_sets::{KeySet, R1_PIN, R1_USER, R2_PIN, R2_USER},
+        emulator::{
+            DEFAULT_PIN, DNIE_3_ATR, EmulatedDnie, HolderCertificate, TerminalKey,
+            component_root_public_key,
+        },
+        key_sets::{ComponentRoots, KeySet, R1_PIN, R1_USER, R2_PIN, R2_USER},
     };
 
     pub(crate) fn card_accepting(key_sets: &[&KeySet]) -> EmulatedDnie {
@@ -188,7 +209,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn open(card: EmulatedDnie) -> Session<EmulatedDnie> {
-        Session::open(card).unwrap()
+        Session::open_with_roots(card, ComponentRoots::only(component_root_public_key())).unwrap()
     }
 
     fn retries(card: EmulatedDnie) -> Result<u8, Error> {
