@@ -64,6 +64,8 @@ pub struct Session<T: Transport> {
     roots: ComponentRoots,
     /// The count [`Session::pin_retries`] last showed, which the next sign expects.
     shown_retries: Option<u8>,
+    /// Every CDF certificate, loaded on the first request and kept for the session.
+    loaded: Option<Vec<certificates::Loaded>>,
 }
 
 impl<T: Transport> Session<T> {
@@ -90,11 +92,13 @@ impl<T: Transport> Session<T> {
             idesp,
             roots,
             shown_retries: None,
+            loaded: None,
         })
     }
 
     /// Lists the holder's certificates that have a private key, each with its PKCS#15 label,
-    /// without a PIN.
+    /// without a PIN. The first call loads every CDF certificate from the card and the session
+    /// keeps them, so later calls send nothing; a failed load keeps nothing.
     ///
     /// # Errors
     ///
@@ -102,7 +106,18 @@ impl<T: Transport> Session<T> {
     /// [`Error::MalformedPkcs15`] if a directory cannot be decoded, a certificate has no file in
     /// its path, no UTF-8 label, or its bytes are not an X.509 certificate.
     pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
-        operation(&mut self.transport, certificates::load)
+        Ok(self
+            .loaded()?
+            .iter()
+            .filter_map(certificates::Loaded::keyed)
+            .collect())
+    }
+
+    fn loaded(&mut self) -> Result<&[certificates::Loaded], Error> {
+        if self.loaded.is_none() {
+            self.loaded = Some(operation(&mut self.transport, certificates::load)?);
+        }
+        Ok(self.loaded.as_deref().unwrap_or_default())
     }
 
     /// Reads how many PIN attempts are left through the PIN channel, without sending a PIN.
@@ -268,6 +283,60 @@ pub(crate) mod tests {
     #[test]
     fn takes_second_generation_keys_without_idesp() {
         assert!(retries(card_accepting(&[&R2_PIN])).is_ok());
+    }
+
+    struct Unplugged(EmulatedDnie, bool);
+
+    impl crate::Transport for Unplugged {
+        fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+            if self.1 {
+                return Err(Error::Transport("unplugged".to_owned()));
+            }
+            self.0.transmit_raw(apdu)
+        }
+
+        fn reset(&mut self) -> Result<Vec<u8>, Error> {
+            self.0.reset()
+        }
+
+        fn transaction<R>(
+            &mut self,
+            body: impl FnOnce(&mut dyn crate::Transport) -> Result<R, Error>,
+        ) -> Result<R, Error> {
+            body(self)
+        }
+    }
+
+    fn listed_card() -> EmulatedDnie {
+        EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&[
+            HolderCertificate::new(1, 120).labelled("CertFirma"),
+            HolderCertificate::new(2, 120).without_key(),
+            HolderCertificate::new(3, 120).labelled("CertAutenticacion"),
+        ])
+    }
+
+    #[test]
+    fn a_second_listing_sends_nothing_to_the_card() {
+        let mut session = open(listed_card());
+        let first = session.certificates().unwrap();
+        let sent = session.transport.commands();
+        let second = session.certificates().unwrap();
+        assert_eq!(session.transport.commands(), sent);
+        let ders =
+            |list: &[crate::Certificate]| list.iter().map(|c| c.der.clone()).collect::<Vec<_>>();
+        assert_eq!(ders(&first), ders(&second));
+        assert_eq!(first.len(), 2);
+    }
+
+    #[test]
+    fn a_failed_load_is_retried_on_the_next_call() {
+        let mut session =
+            Session::open_with_roots(Unplugged(listed_card(), false), ComponentRoots::embedded())
+                .unwrap();
+        session.transport.1 = true;
+        assert!(matches!(session.certificates(), Err(Error::Transport(_))));
+        session.transport.1 = false;
+        assert_eq!(session.certificates().unwrap().len(), 2);
     }
 
     fn signing_card() -> EmulatedDnie {

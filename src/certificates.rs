@@ -90,8 +90,25 @@ impl fmt::Debug for KeyReference {
     }
 }
 
-/// Reads the CDF, each certificate it lists and the PrKDF, and keeps the certificates with a key.
-pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Certificate>, Error> {
+/// A CDF certificate, with the key the PrKDF pairs it with, if any.
+pub(crate) struct Loaded {
+    pub(crate) der: Vec<u8>,
+    pub(crate) label: String,
+    pub(crate) key: Option<KeyReference>,
+}
+
+impl Loaded {
+    pub(crate) fn keyed(&self) -> Option<Certificate> {
+        Some(Certificate {
+            der: self.der.clone(),
+            label: self.label.clone(),
+            key: self.key.clone()?,
+        })
+    }
+}
+
+/// Reads the CDF, each certificate it lists and the PrKDF, and keeps every certificate.
+pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Loaded>, Error> {
     let listed = pkcs15::entries(&files::read(card, &location(CDF)?)?, true)?;
     let mut ders = Vec::with_capacity(listed.len());
     for entry in &listed {
@@ -99,18 +116,21 @@ pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Certificate>, Error> 
         ders.push(x509(&stored).ok_or(Error::MalformedPkcs15)?);
     }
     let keys = pkcs15::entries(&files::read(card, &location(PRKDF)?)?, false)?;
-    let mut certificates = Vec::new();
+    let mut certificates = Vec::with_capacity(ders.len());
     for (entry, der) in listed.into_iter().zip(ders) {
-        let Some(key) = keys.iter().find(|key| key.id == entry.id) else {
-            continue;
+        let key = match keys.iter().find(|key| key.id == entry.id) {
+            Some(key) => {
+                let file = location(&key.path)?
+                    .last_file()
+                    .ok_or(Error::MalformedPkcs15)?;
+                Some(KeyReference { id: entry.id, file })
+            }
+            None => None,
         };
-        let file = location(&key.path)?
-            .last_file()
-            .ok_or(Error::MalformedPkcs15)?;
-        certificates.push(Certificate {
+        certificates.push(Loaded {
             der,
             label: entry.label,
-            key: KeyReference { id: entry.id, file },
+            key,
         });
     }
     Ok(certificates)
