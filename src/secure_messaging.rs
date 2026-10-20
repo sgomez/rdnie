@@ -144,13 +144,15 @@ impl SecureMessaging {
         let protected = self.protect(command)?;
         let response = self.unprotect(&transport.transmit(&protected)?)?;
         match response.status.0.to_be_bytes() {
-            [WRONG_LENGTH, le] => self.transmit(
-                transport,
-                &Command {
+            [WRONG_LENGTH, le] => {
+                let mut resent = Command {
                     le: Some(short_le(le)),
                     ..command.clone()
-                },
-            ),
+                };
+                let response = self.transmit(transport, &resent);
+                resent.data.zeroize();
+                response
+            }
             _ => Ok(response),
         }
     }
@@ -184,14 +186,12 @@ impl SecureMessaging {
         }
         self.verify_mac(authenticated, mac)?;
 
+        let status = StatusWord(u16::from_be_bytes([sw1, sw2]));
         let data = match cryptogram {
-            Some(cryptogram) => self.decrypt(cryptogram)?,
-            None => Vec::new(),
+            Some(cryptogram) if status.is_success() => self.decrypt(cryptogram)?,
+            _ => Vec::new(),
         };
-        Ok(Response {
-            data,
-            status: StatusWord(u16::from_be_bytes([sw1, sw2])),
-        })
+        Ok(Response { data, status })
     }
 
     fn verify_mac(&self, authenticated: &[u8], mac: &[u8]) -> Result<(), Error> {

@@ -41,6 +41,8 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
+use zeroize::Zeroize;
+
 use crate::{Command, Error, Response};
 
 /// Channel the APDUs travel through: PC/SC in production, an emulator in tests.
@@ -91,10 +93,15 @@ pub trait Transport {
                     status: rest.status,
                 })
             }
-            WRONG_LENGTH if command.cla == PLAIN_CLA => self.transmit(&Command {
-                le: Some(short_le(sw2)),
-                ..command.clone()
-            }),
+            WRONG_LENGTH if command.cla == PLAIN_CLA => {
+                let mut resent = Command {
+                    le: Some(short_le(sw2)),
+                    ..command.clone()
+                };
+                let response = self.transmit(&resent);
+                resent.data.zeroize();
+                response
+            }
             _ => Ok(response),
         }
     }

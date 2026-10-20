@@ -77,6 +77,7 @@ pub struct EmulatedDnie {
     pin_queries: Vec<PinQuery>,
     retry_lost_between_transactions: bool,
     fault: Option<Fault>,
+    master_file_answer: Vec<u8>,
 }
 
 /// A `VERIFY` the card received.
@@ -132,6 +133,7 @@ impl EmulatedDnie {
             pin_queries: Vec::new(),
             retry_lost_between_transactions: false,
             fault: None,
+            master_file_answer: Vec::new(),
         }
     }
 
@@ -234,6 +236,12 @@ impl EmulatedDnie {
     /// Corrupts the MAC of the next protected response.
     pub fn corrupting_a_response_mac(mut self) -> Self {
         self.fault = Some(Fault::BadResponseMac);
+        self
+    }
+
+    /// Answers SELECT of the master file by name with `9000` and `answer`, which is no FCI.
+    pub fn answering_master_file_selection_with(mut self, answer: &[u8]) -> Self {
+        self.master_file_answer = answer.to_vec();
         self
     }
 
@@ -426,7 +434,7 @@ impl EmulatedDnie {
         match (apdu.p1, apdu.data) {
             (0x04, MASTER_FILE_NAME) => {
                 self.current.clear();
-                with_status(vec![], 0x9000)
+                with_status(self.master_file_answer.clone(), 0x9000)
             }
             (0x00, &[high, low]) => {
                 let mut path = self.current_df();
