@@ -126,7 +126,7 @@ The comparison is a plain lexicographic `String.compareTo`. Distinct material to
   - Try `SHARE_EXCLUSIVE` only as a probe: it fails while CertPropSvc holds the card.
 - On **Linux** (OpenSC with its DNIe driver, via p11-kit/NSS) and **macOS** (an OpenSC CTK token, if installed), the same contention exists. It is less aggressive because nobody opens the card on insertion unless asked.
 - **Reset or no reset at the start?** A reset is robust but kills other apps' sessions. Without one, it is unknown whether a plain `SELECT` is accepted while another app's channel is open. Decide on the real card.
-- **Close with a reset.** rdnie disconnects with `RESET_CARD` after signing so no other process inherits the PIN-verified state.
+- **Close as JMulticard.** rdnie resets only when the session opens; operations never reset, and closing leaves the card (`LEAVE_CARD`).
 - **Transport seam.** The `Transport` trait today only has `transmit_raw`. It needs reset, a transaction scope, and the 61xx/6Cxx/GET RESPONSE handling below the SM layer. The emulator must implement all three.
 
 ### What only the real card can validate
@@ -137,7 +137,6 @@ All of these are run by hand by the card's holder, and logs carry status words o
 - r1/r2 key selection on 3.0 and 4.0.
 - Behaviour of `GET RESPONSE` with a 2048-bit signature over SM.
 - The PIN state surviving the switch to the user channel.
-- Whether `RESET_CARD` drops the verified state.
 - Coexistence with the Windows minidriver and with OpenSC.
 - The ICC certificate verifying against the CA component key, if we decide to check it.
 
@@ -160,7 +159,7 @@ My honest take on the ordering: **the emulator cannot wait until the end**. The 
 **0.2: VERIFY and signing**
 
 8. **VERIFY.** Format checks, retries read in the same session, one attempt, PIN zeroized, transaction released while asking for the PIN.
-9. **Signing.** User channel, `MSE SET DST` with the PrKDF key ID, `PSO CDS` over the DigestInfo of a caller-supplied digest (SHA-256/384/512), and `RESET_CARD` on close.
+9. **Signing.** User channel, `MSE SET DST` with the PrKDF key ID, `PSO CDS` over the DigestInfo of a caller-supplied digest (SHA-256/384/512). Closing leaves the card.
 
 **0.3: CI emulator**
 
