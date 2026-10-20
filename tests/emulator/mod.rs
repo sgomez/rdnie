@@ -78,6 +78,30 @@ pub struct EmulatedDnie {
     retry_lost_between_transactions: bool,
     fault: Option<Fault>,
     master_file_answer: Vec<u8>,
+    handshake_fault: Option<HandshakeFault>,
+}
+
+/// A step of the handshake the card fails.
+#[derive(Clone, Copy)]
+pub enum HandshakeFault {
+    /// Refuses `MSE SET` selecting the key that verifies the certificates.
+    RefusingMseVerifyCertificate,
+    /// Refuses `PSO VERIFY CERTIFICATE`.
+    RefusingVerifyCertificate,
+    /// Refuses `MSE SET` selecting the keys of the authentication.
+    RefusingMseAuthentication,
+    /// Refuses `INTERNAL AUTHENTICATE`.
+    RefusingInternalAuthenticate,
+    /// Refuses `GET CHALLENGE`.
+    RefusingChallenge,
+    /// Refuses `GET CHIP INFO`.
+    RefusingChipInfo,
+    /// Refuses `EXTERNAL AUTHENTICATE`.
+    RefusingExternalAuthenticate,
+    /// Resets the card on `EXTERNAL AUTHENTICATE`.
+    ResettingOnExternalAuthenticate,
+    /// The reader fails on `EXTERNAL AUTHENTICATE`.
+    FailingOnExternalAuthenticate,
 }
 
 /// A `VERIFY` the card received.
@@ -134,6 +158,7 @@ impl EmulatedDnie {
             retry_lost_between_transactions: false,
             fault: None,
             master_file_answer: Vec::new(),
+            handshake_fault: None,
         }
     }
 
@@ -221,6 +246,17 @@ impl EmulatedDnie {
         self.commands
     }
 
+    /// Fails `fault` of the handshake.
+    pub fn failing(mut self, fault: HandshakeFault) -> Self {
+        self.handshake_fault = Some(fault);
+        self
+    }
+
+    fn faulty(&self, fault: HandshakeFault) -> bool {
+        self.handshake_fault
+            .is_some_and(|set| std::mem::discriminant(&set) == std::mem::discriminant(&fault))
+    }
+
     /// Resets the card on the next protected command, which the transport reports.
     pub fn resetting_mid_channel(mut self) -> Self {
         self.fault = Some(Fault::Reset);
@@ -296,6 +332,7 @@ impl EmulatedDnie {
         match apdu.ins {
             SELECT => self.select(apdu),
             READ_BINARY => self.read_binary(apdu),
+            GET_CHALLENGE if self.faulty(HandshakeFault::RefusingChallenge) => vec![0x69, 0x85],
             GET_CHALLENGE => self.deliver(CHALLENGE.to_vec(), apdu.le),
             GET_RESPONSE if !self.pending.is_empty() => self.serve_pending(apdu.le.unwrap_or(256)),
             GET_RESPONSE => vec![0x69, 0x85],
@@ -305,6 +342,18 @@ impl EmulatedDnie {
     }
 
     fn authenticate(&mut self, apdu: &Apdu) -> Vec<u8> {
+        let refused = match (apdu.ins, apdu.p1, apdu.p2) {
+            (GET_CHIP_INFO, _, _) => Some(HandshakeFault::RefusingChipInfo),
+            (MSE, 0x81, 0xB6) => Some(HandshakeFault::RefusingMseVerifyCertificate),
+            (PSO, 0x00, 0xAE) => Some(HandshakeFault::RefusingVerifyCertificate),
+            (MSE, 0xC1, 0xA4) => Some(HandshakeFault::RefusingMseAuthentication),
+            (INTERNAL_AUTHENTICATE, _, _) => Some(HandshakeFault::RefusingInternalAuthenticate),
+            (EXTERNAL_AUTHENTICATE, _, _) => Some(HandshakeFault::RefusingExternalAuthenticate),
+            _ => None,
+        };
+        if refused.is_some_and(|step| self.faulty(step)) {
+            return vec![0x69, 0x85];
+        }
         match (apdu.ins, apdu.p1, apdu.p2) {
             (GET_CHIP_INFO, _, _) => self.deliver(chip::SERIAL.to_vec(), apdu.le),
             (MSE, 0x81, 0xB6) | (PSO, 0x00, 0xAE) => vec![0x90, 0x00],
@@ -541,6 +590,15 @@ impl Transport for EmulatedDnie {
         let Some(apdu) = parse(apdu) else {
             return Ok(vec![0x67, 0x00]);
         };
+        if apdu.ins == EXTERNAL_AUTHENTICATE {
+            if self.faulty(HandshakeFault::ResettingOnExternalAuthenticate) {
+                self.reset()?;
+                return Err(Error::CardReset);
+            }
+            if self.faulty(HandshakeFault::FailingOnExternalAuthenticate) {
+                return Err(Error::Transport("reader unplugged".to_owned()));
+            }
+        }
         if apdu.ins != GET_RESPONSE {
             self.pending.clear();
             self.channel = None;
