@@ -173,6 +173,11 @@ fn one_bad_certificate_fails_the_whole_load() {
         HolderCertificate::not_x509(2, 120),
     ];
     assert!(matches!(load_error(&certificates), Error::MalformedPkcs15));
+    let keyless = [
+        HolderCertificate::new(1, 120),
+        HolderCertificate::not_x509(2, 120).without_key(),
+    ];
+    assert!(matches!(load_error(&keyless), Error::MalformedPkcs15));
 }
 
 fn fetch(certificates: &[HolderCertificate], label: &str) -> Option<Vec<u8>> {
