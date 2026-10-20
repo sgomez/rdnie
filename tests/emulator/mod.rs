@@ -242,6 +242,11 @@ impl EmulatedDnie {
         self
     }
 
+    pub fn with_pin_bytes(mut self, pin: &[u8]) -> Self {
+        self.pin = pin.to_vec();
+        self
+    }
+
     /// Answers the retries query with `status` whatever the PIN state.
     pub fn answering_retries_with(mut self, status: u16) -> Self {
         self.retries_answer = Some(status);

@@ -66,14 +66,22 @@ impl Pin {
         Self(Zeroizing::new(pin))
     }
 
-    /// Refuses a PIN that is not 8 to 16 printable ASCII characters, before any APDU is sent.
+    /// Refuses a PIN that is not 8 to 16 characters, counted as UTF-16 units, before any APDU is
+    /// sent.
     pub(crate) fn check_format(&self) -> Result<(), Error> {
-        let printable = self.0.bytes().all(|byte| (b' '..=b'~').contains(&byte));
-        if PIN_LENGTH.contains(&self.0.len()) && printable {
+        if PIN_LENGTH.contains(&self.0.encode_utf16().count()) {
             Ok(())
         } else {
             Err(Error::InvalidPinFormat)
         }
+    }
+
+    /// The low byte of each UTF-16 unit, as `VerifyApduCommand` casts each `char`.
+    fn encode(&self) -> Vec<u8> {
+        self.0
+            .encode_utf16()
+            .map(|unit| unit.to_le_bytes()[0])
+            .collect()
     }
 }
 
@@ -115,7 +123,7 @@ pub(crate) fn verify(
         ins: VERIFY,
         p1: 0x00,
         p2: 0x00,
-        data: pin.0.as_bytes().to_vec(),
+        data: pin.encode(),
         le: None,
     };
     drop(pin);
