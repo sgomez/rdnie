@@ -62,15 +62,15 @@ const FCI: u8 = 0x6F;
 pub(crate) struct Location(Vec<[u8; 2]>);
 
 impl Location {
-    /// Builds a location from file IDs, dropping any `3F00`.
+    /// Builds a location from file IDs, dropping any `3F00`; `None` if no file is left.
     pub(crate) fn new(path: &[u8]) -> Option<Self> {
         let ids = path.chunks(2).map(|id| <[u8; 2]>::try_from(id).ok());
         let ids: Option<Vec<[u8; 2]>> = ids.collect();
         let ids = ids?
             .into_iter()
             .filter(|id| *id != MASTER_FILE_ID)
-            .collect();
-        Some(Self(ids))
+            .collect::<Vec<_>>();
+        (!ids.is_empty()).then_some(Self(ids))
     }
 
     /// ID of the file the path ends in.

@@ -98,7 +98,8 @@ impl<T: Transport> Session<T> {
     /// # Errors
     ///
     /// Those of [`Session::open`], [`Error::Status`] if a file cannot be read and
-    /// [`Error::MalformedPkcs15`].
+    /// [`Error::MalformedPkcs15`] if a directory cannot be decoded, a certificate has no file in
+    /// its path or its bytes are not an X.509 certificate.
     pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
         operation(&mut self.transport, certificates::load)
     }
