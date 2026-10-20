@@ -46,6 +46,8 @@ use zeroize::Zeroize;
 use crate::{Command, Error, Response};
 
 /// Channel the APDUs travel through: PC/SC in production, an emulator in tests.
+///
+/// After [`Error::CardRemoved`] the transport is spent: open a new transport and a new session.
 pub trait Transport {
     /// Sends a raw APDU and returns the response including its status word.
     ///
