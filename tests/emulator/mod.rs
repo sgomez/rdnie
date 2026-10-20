@@ -77,6 +77,7 @@ pub struct EmulatedDnie {
     pin_queries: Vec<PinQuery>,
     retry_lost_between_transactions: bool,
     fault: Option<Fault>,
+    removed: bool,
     master_file_answer: Vec<u8>,
     handshake_fault: Option<HandshakeFault>,
     unauthenticated_read: Option<u16>,
@@ -158,6 +159,7 @@ impl EmulatedDnie {
             pin_queries: Vec::new(),
             retry_lost_between_transactions: false,
             fault: None,
+            removed: false,
             master_file_answer: Vec::new(),
             handshake_fault: None,
             unauthenticated_read: None,
@@ -256,6 +258,11 @@ impl EmulatedDnie {
 
     fn faulty(&self, fault: HandshakeFault) -> bool {
         self.handshake_fault == Some(fault)
+    }
+
+    /// Pulls the card out: every later call reports it removed.
+    pub fn remove_card(&mut self) {
+        self.removed = true;
     }
 
     /// Resets the card on the next protected command, which the transport reports.
@@ -578,6 +585,9 @@ impl EmulatedDnie {
 
 impl Transport for EmulatedDnie {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        if self.removed {
+            return Err(Error::CardRemoved);
+        }
         self.commands += 1;
         let protected = apdu.first().is_some_and(|cla| cla & PROTECTED == PROTECTED);
         if protected && self.channel.is_some() {
@@ -619,6 +629,9 @@ impl Transport for EmulatedDnie {
     }
 
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
+        if self.removed {
+            return Err(Error::CardRemoved);
+        }
         self.pending.clear();
         self.current.clear();
         self.channel = None;
@@ -635,6 +648,9 @@ impl Transport for EmulatedDnie {
         &mut self,
         body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
     ) -> Result<R, Error> {
+        if self.removed {
+            return Err(Error::CardRemoved);
+        }
         self.transactions += 1;
         if self.retry_lost_between_transactions && !self.pin_queries.is_empty() {
             self.retry_lost_between_transactions = false;
