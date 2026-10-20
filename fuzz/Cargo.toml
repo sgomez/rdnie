@@ -50,3 +50,24 @@ path = "fuzz_targets/holder.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "secure_messaging"
+path = "fuzz_targets/secure_messaging.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "secure_messaging_raw"
+path = "fuzz_targets/secure_messaging_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cwa14890"
+path = "fuzz_targets/cwa14890.rs"
+test = false
+doc = false
+bench = false

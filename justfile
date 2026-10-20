@@ -30,7 +30,7 @@ fuzz target secs="60":
 
 # Writes the emulator's responses into `fuzz/corpus/<target>`.
 fuzz-seed:
-    cargo test --quiet --test fuzz_seeds -- --ignored
+    cargo test --quiet --lib --test fuzz_seeds -- --ignored
 
 # Looks for a DNIe in the readers without sending it any APDU.
 detect:

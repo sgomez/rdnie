@@ -253,6 +253,38 @@ impl SecureMessaging {
     }
 }
 
+#[cfg(any(test, fuzzing))]
+impl SecureMessaging {
+    /// A channel with fixed keys and SSC, shared by the fuzz targets and their seeds.
+    pub(crate) fn fixed() -> Self {
+        Self::derive(&[0x11; 32], &[0x22; 32], [0x33; 8], [0x44; 8])
+    }
+
+    /// The card's `[87] 99 8E 90 00` answer to the next command, with `plain` encrypted as is, so
+    /// it must be block aligned and carry its own padding.
+    pub(crate) fn protected_response(&self, plain: &[u8], status: StatusWord) -> Vec<u8> {
+        let mut objects = Vec::new();
+        if !plain.is_empty() {
+            let mut cryptogram = vec![PADDING_INDICATOR];
+            cryptogram.extend(
+                cbc::Encryptor::<TdesEde2>::new(&self.kenc.into(), &[0; BLOCK].into())
+                    .encrypt_padded_vec::<NoPadding>(plain),
+            );
+            push_tlv(&mut objects, TAG_CRYPTOGRAM, &cryptogram);
+        }
+        push_tlv(&mut objects, TAG_STATUS, &status.0.to_be_bytes());
+        let card = Self {
+            kenc: self.kenc,
+            kmac: self.kmac,
+            ssc: self.ssc.wrapping_add(1),
+        };
+        let mac = card.mac(&objects);
+        push_tlv(&mut objects, TAG_MAC, &mac);
+        objects.extend(StatusWord::SUCCESS.0.to_be_bytes());
+        objects
+    }
+}
+
 /// A transport whose commands all travel through `channel`, as a channel opened inside another.
 pub(crate) struct Protected<'a> {
     pub(crate) channel: &'a mut SecureMessaging,
@@ -651,6 +683,26 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status, StatusWord(u16::from_be_bytes(status)));
             assert_eq!(card.sent.len(), 1);
+        }
+    }
+
+    #[test]
+    fn unprotects_the_card_side_response_in_every_length_form() {
+        for (length, header) in [
+            (0, &[TAG_STATUS, 0x02][..]),
+            (8, &[TAG_CRYPTOGRAM, 0x09]),
+            (128, &[TAG_CRYPTOGRAM, 0x81, 0x81]),
+            (384, &[TAG_CRYPTOGRAM, 0x82, 0x01, 0x81]),
+        ] {
+            let plain: Vec<u8> = (0..length)
+                .map(|i| u8::try_from(i % 251).unwrap())
+                .collect();
+            let mut channel = SecureMessaging::fixed();
+            let raw = channel.protected_response(&plain, StatusWord(0x6282));
+            assert_eq!(raw[..header.len()], *header, "{length}");
+            let response = channel.unprotect(&Response::parse(&raw).unwrap()).unwrap();
+            assert_eq!(response.data, plain);
+            assert_eq!(response.status, StatusWord(0x6282));
         }
     }
 
