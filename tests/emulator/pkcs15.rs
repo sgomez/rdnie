@@ -44,6 +44,7 @@ pub struct HolderCertificate {
     compressed: bool,
     trailing: usize,
     cdf_path: Option<Vec<u8>>,
+    cdf_label: Option<Vec<u8>>,
 }
 
 impl HolderCertificate {
@@ -60,6 +61,11 @@ impl HolderCertificate {
             key: Some(HOLDER_KEY.clone()),
             ..Self::new(id, 0)
         }
+    }
+
+    /// A self-signed X.509 certificate issued to `subject`.
+    pub fn with_subject(id: u8, subject: Name) -> Self {
+        Self::with_der(id, x509_der_of(id, subject))
     }
 
     /// A certificate whose bytes are DER-shaped but not X.509.
@@ -83,7 +89,26 @@ impl HolderCertificate {
             compressed: false,
             trailing: 0,
             cdf_path: None,
+            cdf_label: Some(format!("Cert{id}").into_bytes()),
         }
+    }
+
+    /// Stores `label` as the CDF label.
+    pub fn labelled(mut self, label: &str) -> Self {
+        self.cdf_label = Some(label.as_bytes().to_vec());
+        self
+    }
+
+    /// Stores `label` as the CDF label, whether or not it is UTF-8.
+    pub fn labelled_bytes(mut self, label: &[u8]) -> Self {
+        self.cdf_label = Some(label.to_vec());
+        self
+    }
+
+    /// Leaves the label out of the CDF object.
+    pub fn without_label(mut self) -> Self {
+        self.cdf_label = None;
+        self
     }
 
     pub fn compressed(mut self) -> Self {
@@ -135,7 +160,13 @@ pub fn cdf(certificates: &[HolderCertificate]) -> Vec<u8> {
             .clone()
             .unwrap_or_else(|| [MASTER_FILE, certificate.file].concat());
         sequence(&[
-            sequence(&[certificate.label()]),
+            sequence(
+                &certificate
+                    .cdf_label
+                    .iter()
+                    .map(|l| tlv(0x0C, l))
+                    .collect::<Vec<_>>(),
+            ),
             sequence(&[tlv(OCTET_STRING, &certificate.pkcs15_id())]),
             tlv(0xA1, &sequence(&[sequence(&[tlv(OCTET_STRING, &path)])])),
         ])
@@ -202,6 +233,13 @@ fn fake_der(seed: u8, length: usize) -> Vec<u8> {
 }
 
 fn x509_der(id: u8, common_name: &str) -> Vec<u8> {
+    x509_der_of(
+        id,
+        Name::from_str(&format!("CN=Test holder{common_name}")).unwrap(),
+    )
+}
+
+fn x509_der_of(id: u8, subject: Name) -> Vec<u8> {
     let key = HOLDER_KEY.clone();
     let spki = SubjectPublicKeyInfoOwned::from_der(
         key.to_public_key().to_public_key_der().unwrap().as_bytes(),
@@ -212,7 +250,7 @@ fn x509_der(id: u8, common_name: &str) -> Vec<u8> {
         Profile::Root,
         SerialNumber::from(u32::from(id)),
         Validity::from_now(Duration::from_secs(3600)).unwrap(),
-        Name::from_str(&format!("CN=Test holder{common_name}")).unwrap(),
+        subject,
         spki,
         &signer,
     )

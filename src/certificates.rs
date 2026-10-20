@@ -2,6 +2,7 @@
 // - es.gob.jmulticard.card.dnie.Dnie (Tomás García-Merás)
 // - es.gob.jmulticard.card.CompressionUtils (Tomás García-Merás)
 // - es.gob.jmulticard.card.dnie.DniePrivateKeyReference (Tomás García-Merás)
+// - es.gob.jmulticard.jse.provider.DnieKeyStoreImpl (Tomás García-Merás)
 // rdnie takes the EUPL 1.1+ branch of the dual licence below.
 //
 // Controlador Java de la Secretaria de Estado de Administraciones Publicas
@@ -60,10 +61,15 @@ const PRKDF: &[u8] = &[0x50, 0x15, 0x60, 0x01];
 /// Bytes before the zlib stream of a compressed certificate.
 const COMPRESSION_HEADER: usize = 8;
 
+/// Label of the DNIe intermediate CA certificate, which has no key on the card.
+pub const INTERMEDIATE_CA_LABEL: &str = "CertCAIntermediaDGP";
+
 /// Certificate of the holder, paired with its private key on the card.
 pub struct Certificate {
     /// X.509 certificate in DER.
     pub der: Vec<u8>,
+    /// PKCS#15 label, exactly as the CDF stores it.
+    pub label: String,
     /// Private key that matches the certificate.
     pub key: KeyReference,
 }
@@ -88,26 +94,47 @@ impl fmt::Debug for KeyReference {
     }
 }
 
-/// Reads the CDF, each certificate it lists and the PrKDF, and keeps the certificates with a key.
-pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Certificate>, Error> {
-    let listed = pkcs15::entries(&files::read(card, &location(CDF)?)?)?;
+/// A CDF certificate, with the key the PrKDF pairs it with, if any.
+pub(crate) struct Loaded {
+    pub(crate) der: Vec<u8>,
+    pub(crate) label: String,
+    pub(crate) key: Option<KeyReference>,
+}
+
+impl Loaded {
+    pub(crate) fn keyed(&self) -> Option<Certificate> {
+        Some(Certificate {
+            der: self.der.clone(),
+            label: self.label.clone(),
+            key: self.key.clone()?,
+        })
+    }
+}
+
+/// Reads the CDF, each certificate it lists and the PrKDF, and keeps every certificate.
+pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Loaded>, Error> {
+    let listed = pkcs15::entries(&files::read(card, &location(CDF)?)?, true)?;
     let mut ders = Vec::with_capacity(listed.len());
     for entry in &listed {
         let stored = decompressed(files::read(card, &location(&entry.path)?)?);
         ders.push(x509(&stored).ok_or(Error::MalformedPkcs15)?);
     }
-    let keys = pkcs15::entries(&files::read(card, &location(PRKDF)?)?)?;
-    let mut certificates = Vec::new();
+    let keys = pkcs15::entries(&files::read(card, &location(PRKDF)?)?, false)?;
+    let mut certificates = Vec::with_capacity(ders.len());
     for (entry, der) in listed.into_iter().zip(ders) {
-        let Some(key) = keys.iter().find(|key| key.id == entry.id) else {
-            continue;
+        let key = match keys.iter().find(|key| key.id == entry.id) {
+            Some(key) => {
+                let file = location(&key.path)?
+                    .last_file()
+                    .ok_or(Error::MalformedPkcs15)?;
+                Some(KeyReference { id: entry.id, file })
+            }
+            None => None,
         };
-        let file = location(&key.path)?
-            .last_file()
-            .ok_or(Error::MalformedPkcs15)?;
-        certificates.push(Certificate {
+        certificates.push(Loaded {
             der,
-            key: KeyReference { id: entry.id, file },
+            label: entry.label,
+            key,
         });
     }
     Ok(certificates)

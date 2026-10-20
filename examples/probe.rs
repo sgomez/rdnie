@@ -1,8 +1,12 @@
-//! Manual probe for the card's holder: prints ATR, status words, counts and pass/fail only.
+//! Manual probe for the card's holder: prints ATR, status words, labels, counts and pass/fail only;
+//! `--verbose` also prints the holder's data, which must never leave the machine.
 
 use std::fmt::Write as _;
 
-use rdnie::{Certificate, Error, HashAlgorithm, KeyGeneration, PcscTransport, Pin, Session};
+use rdnie::{
+    Certificate, Error, HashAlgorithm, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration, PcscTransport,
+    Pin, Session,
+};
 use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
 use sha2_010::{Digest, Sha256};
 use x509_cert::{
@@ -31,6 +35,22 @@ fn run() -> Result<(), Error> {
 
     let certificates = session.certificates()?;
     println!("certificates: {}", certificates.len());
+    for certificate in &certificates {
+        println!("label: {}", certificate.label);
+        holder(
+            &certificate.der,
+            std::env::args().any(|argument| argument == "--verbose"),
+        );
+    }
+    let intermediate = session.certificate(INTERMEDIATE_CA_LABEL)?;
+    println!(
+        "intermediate CA: {}",
+        match intermediate {
+            Some(der) if x509_cert::Certificate::from_der(&der).is_ok() => "pass",
+            Some(_) => "fail (not X.509)",
+            None => "fail (not found)",
+        }
+    );
 
     match session.pin_retries() {
         Ok(retries) => {
@@ -85,6 +105,29 @@ fn sign(session: &mut Session<PcscTransport>, certificates: &[Certificate]) -> R
         if verified { "pass" } else { "fail" }
     );
     Ok(())
+}
+
+/// Prints which holder fields the certificate yields; their values only when `verbose`.
+fn holder(der: &[u8], verbose: bool) {
+    let holder = match Holder::from_der(der) {
+        Ok(holder) => holder,
+        Err(error) => {
+            println!("  holder: fail ({error})");
+            return;
+        }
+    };
+    let show = |field: &Option<String>| match field {
+        Some(value) if verbose => format!("{value:?}"),
+        Some(_) => "yes".to_owned(),
+        None => "no".to_owned(),
+    };
+    println!(
+        "  holder: name {}, first surname {}, second surname {}, number {}",
+        show(&holder.name),
+        show(&holder.first_surname),
+        show(&holder.second_surname),
+        show(&holder.number),
+    );
 }
 
 fn is_signature(der: &[u8]) -> bool {

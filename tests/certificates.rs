@@ -131,6 +131,41 @@ fn rejects_a_compressed_certificate_that_is_not_x509() {
     assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
 }
 
+fn labels(certificates: &[HolderCertificate]) -> Vec<String> {
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(certificates);
+    let listed = Session::open(card).unwrap().certificates().unwrap();
+    listed.into_iter().map(|c| c.label).collect()
+}
+
+#[test]
+fn lists_the_labels_the_cdf_holds_in_cdf_order() {
+    let certificates = [
+        HolderCertificate::new(1, 120).labelled("CertFirma"),
+        HolderCertificate::new(2, 120).labelled("CertAutenticacion"),
+    ];
+    assert_eq!(labels(&certificates), ["CertFirma", "CertAutenticacion"]);
+}
+
+#[test]
+fn rejects_a_cdf_object_without_a_label() {
+    let certificate = HolderCertificate::new(1, 120).without_label();
+    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+}
+
+#[test]
+fn rejects_a_label_that_is_not_utf8() {
+    let certificate = HolderCertificate::new(1, 120).labelled_bytes(&[0xFF, 0xFE]);
+    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+}
+
+#[test]
+fn debug_output_hides_the_label() {
+    let certificates = [HolderCertificate::new(1, 120).labelled("CertSecreto")];
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
+    let listed = Session::open(card).unwrap().certificates().unwrap();
+    assert_eq!(format!("{:?}", listed[0]), "Certificate { .. }");
+}
+
 #[test]
 fn one_bad_certificate_fails_the_whole_load() {
     let certificates = [
@@ -138,4 +173,52 @@ fn one_bad_certificate_fails_the_whole_load() {
         HolderCertificate::not_x509(2, 120),
     ];
     assert!(matches!(load_error(&certificates), Error::MalformedPkcs15));
+    let keyless = [
+        HolderCertificate::new(1, 120),
+        HolderCertificate::not_x509(2, 120).without_key(),
+    ];
+    assert!(matches!(load_error(&keyless), Error::MalformedPkcs15));
+}
+
+fn fetch(certificates: &[HolderCertificate], label: &str) -> Option<Vec<u8>> {
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(certificates);
+    Session::open(card).unwrap().certificate(label).unwrap()
+}
+
+#[test]
+fn fetches_the_keyless_intermediate_ca_by_its_public_label_but_does_not_list_it() {
+    let ca = HolderCertificate::new(2, 120)
+        .labelled("CertCAIntermediaDGP")
+        .without_key();
+    let certificates = [HolderCertificate::new(1, 120), ca.clone()];
+    assert_eq!(rdnie::INTERMEDIATE_CA_LABEL, "CertCAIntermediaDGP");
+    assert_eq!(
+        fetch(&certificates, rdnie::INTERMEDIATE_CA_LABEL),
+        Some(ca.der)
+    );
+    assert_eq!(labels(&certificates).len(), 1);
+}
+
+#[test]
+fn fetches_a_keyed_certificate_with_the_der_it_is_listed_with() {
+    let certificate = HolderCertificate::new(1, 120).labelled("CertFirma");
+    assert_eq!(
+        fetch(std::slice::from_ref(&certificate), "CertFirma"),
+        Some(certificate.der)
+    );
+}
+
+#[test]
+fn an_unknown_label_is_absent() {
+    let certificates = [HolderCertificate::new(1, 120).labelled("CertFirma")];
+    assert_eq!(fetch(&certificates, "Other"), None);
+}
+
+#[test]
+fn with_duplicate_labels_the_last_one_wins() {
+    let first = HolderCertificate::new(1, 120).labelled("Same");
+    let last = HolderCertificate::new(2, 150)
+        .labelled("Same")
+        .without_key();
+    assert_eq!(fetch(&[first, last.clone()], "Same"), Some(last.der));
 }

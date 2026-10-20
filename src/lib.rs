@@ -13,6 +13,7 @@ mod cwa14890;
 mod emulator;
 mod error;
 mod files;
+mod holder;
 mod key_sets;
 #[cfg(feature = "pcsc")]
 mod pcsc_transport;
@@ -25,8 +26,9 @@ mod transport;
 
 pub use apdu::{Command, Response, StatusWord};
 pub use atr::is_dnie;
-pub use certificates::{Certificate, KeyReference};
+pub use certificates::{Certificate, INTERMEDIATE_CA_LABEL, KeyReference};
 pub use error::Error;
+pub use holder::Holder;
 pub use key_sets::KeyGeneration;
 #[cfg(feature = "pcsc")]
 pub use pcsc_transport::PcscTransport;
