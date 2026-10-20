@@ -21,6 +21,11 @@ test:
 deny:
     cargo deny check
 
+# Mutates the code and reports the mutants the tests miss; slow, run by hand.
+[positional-arguments]
+mutants *args:
+    cargo mutants "$@"
+
 test-one filter:
     cargo test --quiet {{ filter }}
 
