@@ -133,6 +133,7 @@ impl ComponentRoots {
 
 /// Key generation the DGP issued the terminal keys in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum KeyGeneration {
     /// Cards with a support number below `BMP100001`.
     First,

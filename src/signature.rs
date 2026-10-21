@@ -63,6 +63,7 @@ const PRIVATE_KEY_REFERENCE: u8 = 0x84;
 
 /// Hash algorithm of the digest to sign.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HashAlgorithm {
     /// SHA-256.
     Sha256,

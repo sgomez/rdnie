@@ -44,6 +44,7 @@ fn run() -> Result<(), Error> {
     let key_set = match session.key_generation() {
         KeyGeneration::First => "r1",
         KeyGeneration::Second => "r2",
+        _ => "unknown",
     };
     println!("key set: {key_set}");
 

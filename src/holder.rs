@@ -57,6 +57,7 @@ use x509_cert::{attr::AttributeTypeAndValue, name::Name};
 use crate::Error;
 
 /// Holder data in the subject of a DNIe certificate; a field the subject lacks is `None`.
+#[non_exhaustive]
 pub struct Holder {
     /// Given name: what follows the first comma of the common name.
     pub name: Option<String>,
