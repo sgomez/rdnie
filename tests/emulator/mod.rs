@@ -19,7 +19,7 @@ pub use chip::{
     Handshake, TerminalKey, component_certificate, component_root_public_key,
     foreign_root_public_key, intermediate_certificate,
 };
-pub use pkcs15::{HolderCertificate, cdf, prkdf};
+pub use pkcs15::{CDF, HolderCertificate, PRKDF, cdf, prkdf};
 pub use recorder::{Recorder, write_corpus};
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
