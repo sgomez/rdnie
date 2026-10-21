@@ -434,14 +434,14 @@ pub(crate) mod tests {
     };
     use sha1::{Digest, Sha1};
 
-    use super::{check_answers, validate_internal_authentication};
+    use super::{check_answers, external_authentication, validate_internal_authentication};
     use crate::{
-        Error, Session,
+        Error, Session, Transport,
         emulator::{
             EmulatedDnie, HandshakeFault, Recorder, component_certificate,
             component_root_public_key, foreign_root_public_key, intermediate_certificate,
         },
-        key_sets::ComponentRoots,
+        key_sets::{Channel, ComponentRoots, KeySet},
         session::tests::{card_with_channel, open},
     };
 
@@ -632,6 +632,71 @@ pub(crate) mod tests {
                 ),
                 "{missing}"
             );
+        }
+    }
+
+    /// A validation against a card key of `size` bytes whose answer is framed to fit it exactly.
+    fn validated_with_key_of(size: usize) -> Result<[u8; 32], Error> {
+        let icc = RsaPrivateKey::new(&mut OsRng, size * 8).unwrap();
+        let terminal = RsaPrivateKey::new(&mut OsRng, 1024).unwrap();
+        let challenge = [0x5A; 16];
+        let payload = vec![0x22; size - 22];
+        let hash = Sha1::new()
+            .chain_update(&payload)
+            .chain_update(challenge)
+            .finalize();
+        let frame = [&[0x6A][..], &payload, &hash, &[0xBC]].concat();
+        let answer = answer_to_frame(&frame, &icc, &terminal.to_public_key());
+        validate_internal_authentication(&answer, &challenge, &terminal, &icc.to_public_key())
+    }
+
+    #[test]
+    fn accepts_a_card_key_of_the_minimum_length() {
+        assert_eq!(validated_with_key_of(54).unwrap(), [0x22; 32]);
+    }
+
+    #[test]
+    fn refuses_a_card_key_one_byte_under_the_minimum_length() {
+        assert!(matches!(
+            validated_with_key_of(53),
+            Err(Error::SecureChannel(_))
+        ));
+    }
+
+    struct AcceptingCard(Vec<Vec<u8>>);
+
+    impl Transport for AcceptingCard {
+        fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+            self.0.push(apdu.to_vec());
+            Ok(vec![0x90, 0x00])
+        }
+
+        fn reset(&mut self) -> Result<Vec<u8>, Error> {
+            Ok(vec![])
+        }
+
+        fn transaction<R>(
+            &mut self,
+            body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+        ) -> Result<R, Error> {
+            body(self)
+        }
+    }
+
+    #[test]
+    fn sends_the_smaller_of_the_signature_and_its_complement_to_the_card() {
+        let keys = KeySet::for_card(None, Channel::User);
+        let icc = RsaPrivateKey::new(&mut OsRng, keys.modulus.len() * 8).unwrap();
+        let half = BigUint::from_bytes_be(keys.modulus) / 2_u8;
+        // Each handshake draws a fresh frame, so half of them sign above N.IFD / 2.
+        for _ in 0..16 {
+            let mut card = AcceptingCard(vec![]);
+            external_authentication(&mut card, keys, &[0x01; 8], [0x02; 8], &icc.to_public_key())
+                .unwrap();
+            let apdu = &card.0[0];
+            let token = BigUint::from_bytes_be(&apdu[5..5 + usize::from(apdu[4])]);
+            let sent = rsa_decrypt_and_check(&icc, Some(&mut OsRng), &token).unwrap();
+            assert!(sent <= half);
         }
     }
 

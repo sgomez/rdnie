@@ -149,6 +149,40 @@ fn loads_a_compressed_certificate_just_under_the_cap() {
     assert_lists(card, &ders(&certificates));
 }
 
+/// A compressed certificate that inflates to `length` bytes: the subject is repeated as the
+/// issuer, so padding grows it two bytes at a time, and a serial number of 0x80 or more adds a byte.
+fn compressed_of_length(length: usize) -> HolderCertificate {
+    let id = if length % 2 == 0 { 0x80 } else { 1 };
+    let mut asked = length / 2;
+    loop {
+        let certificate = HolderCertificate::new(id, asked);
+        let size = certificate.der.len();
+        if size == length {
+            return certificate.compressed();
+        }
+        assert!(
+            size.abs_diff(length) > 1,
+            "no padding reaches {length} bytes"
+        );
+        asked = asked
+            .checked_add_signed((length as isize - size as isize) / 2)
+            .unwrap();
+    }
+}
+
+#[test]
+fn loads_a_compressed_certificate_that_inflates_to_exactly_the_cap() {
+    let certificates = [compressed_of_length(16 * 1024)];
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
+    assert_lists(card, &ders(&certificates));
+}
+
+#[test]
+fn rejects_a_compressed_certificate_that_inflates_one_byte_past_the_cap() {
+    let certificate = compressed_of_length(16 * 1024 + 1);
+    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+}
+
 fn labels(certificates: &[HolderCertificate]) -> Vec<String> {
     let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(certificates);
     let listed = Session::open(card).unwrap().certificates().unwrap();

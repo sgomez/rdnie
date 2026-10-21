@@ -1,3 +1,3 @@
-# The PC/SC transport needs a real reader; the describers are lookup tables of text; Drop only zeroizes.
-exclude_globs = ["src/pcsc_transport.rs"]
+# The PC/SC transport needs a real reader; the fuzzing entry points only build under cfg(fuzzing); the describers are lookup tables of text; Drop only zeroizes.
+exclude_globs = ["src/pcsc_transport.rs", "src/fuzzing.rs"]
 exclude_re = ["in describe(_atr)?$", "<impl Drop for "]
