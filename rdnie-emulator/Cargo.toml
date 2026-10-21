@@ -8,6 +8,10 @@ description = "Emulated Spanish electronic ID card (DNIe) behind rdnie's Transpo
 repository = "https://github.com/sgomez/rdnie"
 publish = false
 
+[features]
+# Fault knobs for rdnie's own tests; outside semver.
+faults = []
+
 [dependencies]
 cbc = { version = "0.2", features = ["alloc"] }
 des = "0.9"
