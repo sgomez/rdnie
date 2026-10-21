@@ -19,7 +19,7 @@ On Linux, building with `pcsc` needs `libpcsclite-dev`.
 
 ## Testing against a real card
 
-The tests run against an emulator. `just detect` looks for a DNIe without sending it any APDU, and `just probe` runs the real-card probe; only the card's holder runs it, and its output is never shared.
+The tests run against the emulator in `rdnie-emulator/`. `just detect` looks for a DNIe without sending it any APDU, and `just probe` runs the real-card probe; only the card's holder runs it, and its output is never shared.
 
 ## Mutation testing
 

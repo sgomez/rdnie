@@ -7,10 +7,10 @@ _default:
 check: fmt-check (file-tokens "--all") lint doc test
 
 fmt:
-    cargo fmt
+    cargo fmt --all
 
 fmt-check:
-    cargo fmt --check
+    cargo fmt --all --check
 
 # Files over 5,000 tokens: the staged ones, or every tracked one with `--all`.
 file-tokens *flags:
@@ -18,19 +18,19 @@ file-tokens *flags:
 
 # With and without PC/SC, so the protocol never depends on the reader.
 lint:
-    cargo clippy --all-targets -- -D warnings
-    cargo clippy --all-targets --no-default-features -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
 # Fails on rustdoc warnings, which docs.rs would show.
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --quiet
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --quiet
 
 test:
-    cargo test --quiet
+    cargo test --workspace --quiet
 
 # Builds the crate from its package, as crates.io will.
 package:
-    cargo package --quiet
+    cargo package --quiet -p rdnie
 
 # The library on the `rust-version` of `Cargo.toml`, with and without PC/SC; the tests may need a newer Rust.
 msrv:
@@ -51,7 +51,7 @@ mutants *args:
     cargo mutants "$@"
 
 test-one filter:
-    cargo test --quiet {{ filter }}
+    cargo test --workspace --quiet {{ filter }}
 
 # Runs one `fuzz/` target for `secs` seconds; Linux and macOS only, with nightly and cargo-fuzz.
 fuzz target secs="60":

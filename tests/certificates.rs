@@ -1,9 +1,9 @@
 //! The holder's certificates are listed without a PIN.
 
-mod emulator;
-
-use emulator::{CDF, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, PRKDF, cdf, prkdf};
 use rdnie::{Error, Session};
+use rdnie_emulator::{
+    CDF, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, PRKDF, cdf, prkdf,
+};
 
 fn assert_lists(card: EmulatedDnie, expected: &[Vec<u8>]) {
     let listed: Vec<Vec<u8>> = Session::open(card)

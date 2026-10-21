@@ -10,6 +10,8 @@ allow = ["Apache-2.0", "BSD-3-Clause", "EUPL-1.2", "MIT", "Unicode-3.0", "Zlib"]
 [bans]
 multiple-versions = "allow"
 wildcards = "deny"
+# The path dependencies between the workspace crates.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

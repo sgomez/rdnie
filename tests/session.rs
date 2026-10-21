@@ -1,9 +1,7 @@
 //! Opening a session classifies the card by its ATR.
 
-mod emulator;
-
-use emulator::{DNIE_3_ATR, EmulatedDnie};
 use rdnie::{Error, Session};
+use rdnie_emulator::{DNIE_3_ATR, EmulatedDnie};
 
 fn with_byte(atr: [u8; 20], index: usize, value: u8) -> [u8; 20] {
     let mut atr = atr;

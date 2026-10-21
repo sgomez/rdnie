@@ -1,0 +1,23 @@
+[package]
+name = "rdnie-emulator"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "EUPL-1.2"
+description = "Emulated Spanish electronic ID card (DNIe) behind rdnie's Transport, for tests without a card"
+repository = "https://github.com/sgomez/rdnie"
+publish = false
+
+[dependencies]
+cbc = { version = "0.2", features = ["alloc"] }
+des = "0.9"
+flate2 = "1"
+rand_core = { version = "0.6", features = ["getrandom"] }
+rdnie = { path = "..", default-features = false }
+retail-mac = "0.1"
+rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit", "sha2"] }
+sha1 = "0.11"
+x509-cert = { version = "0.2", default-features = false, features = ["builder"] }
+
+[lints]
+workspace = true

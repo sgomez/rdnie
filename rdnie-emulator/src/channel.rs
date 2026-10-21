@@ -22,6 +22,7 @@ pub struct Unwrapped {
 /// How the card lays out the objects of its protected responses.
 #[derive(Clone, Copy, Default)]
 pub enum ResponseShape {
+    /// `[87] 99 8E`, unaltered.
     #[default]
     Standard,
     /// Appends these bytes after the MAC object.

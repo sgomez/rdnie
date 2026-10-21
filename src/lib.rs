@@ -1,6 +1,6 @@
 //! Driver for the Spanish electronic ID card (DNIe) that talks APDU to the card, without PKCS#11 or system drivers.
 
-// Lets the unit tests share the emulator of the integration tests.
+// Lets the unit tests compile the source of `rdnie-emulator`, which names this crate `rdnie`.
 #[cfg(test)]
 extern crate self as rdnie;
 
@@ -9,7 +9,7 @@ mod atr;
 mod certificates;
 mod cwa14890;
 #[cfg(test)]
-#[path = "../tests/emulator/mod.rs"]
+#[path = "../rdnie-emulator/src/lib.rs"]
 mod emulator;
 mod error;
 mod files;
@@ -24,6 +24,9 @@ mod key_sets;
 mod pcsc_transport;
 mod pin;
 mod pkcs15;
+#[cfg(test)]
+#[path = "../tests/recorder/mod.rs"]
+mod recorder;
 mod secure_messaging;
 mod session;
 mod signature;

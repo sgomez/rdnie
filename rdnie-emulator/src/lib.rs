@@ -1,12 +1,18 @@
-//! Emulated DNIe behind the `Transport` seam, generated at test time from no real card data.
-// Each test crate uses a different part of the emulator.
+//! Emulated DNIe behind the `Transport` seam, generated at run time from no real card data.
+// rdnie's unit tests compile this source as a module and use only part of it.
 #![allow(dead_code, unused_imports)]
+// Pedantic lints for library APIs, which this test fixture was written without.
+#![allow(
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use,
+    clippy::missing_panics_doc,
+    clippy::wildcard_imports
+)]
 
 mod channel;
 mod chip;
 mod commands;
 mod pkcs15;
-mod recorder;
 
 use std::collections::BTreeMap;
 
@@ -21,7 +27,6 @@ pub use chip::{
     foreign_root_public_key, intermediate_certificate,
 };
 pub use pkcs15::{CDF, HolderCertificate, PRKDF, cdf, prkdf};
-pub use recorder::{Recorder, write_corpus};
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
 pub const DNIE_3_ATR: [u8; 20] = [
@@ -58,7 +63,10 @@ pub enum Delivery {
     /// In the response itself.
     Direct,
     /// Announced with `61xx` and served by `GET RESPONSE` at most `chunk` bytes at a time.
-    GetResponse { chunk: usize },
+    GetResponse {
+        /// Most bytes per `GET RESPONSE`.
+        chunk: usize,
+    },
     /// Only when Le matches its length; otherwise `6Cxx` with the right one.
     ExactLe,
     /// Answers `61xx` to the command and to every `GET RESPONSE`.
@@ -169,6 +177,7 @@ struct Apdu<'a> {
 }
 
 impl EmulatedDnie {
+    /// A card answering with `atr`, holding no files and expecting [`DEFAULT_PIN`].
     pub fn new(atr: &[u8]) -> Self {
         Self {
             atr: atr.to_vec(),
@@ -250,6 +259,7 @@ impl EmulatedDnie {
         self
     }
 
+    /// Sets the PIN the card accepts, as raw bytes.
     pub fn with_pin_bytes(mut self, pin: &[u8]) -> Self {
         self.pin = pin.to_vec();
         self
@@ -373,6 +383,7 @@ impl EmulatedDnie {
         self.chip.as_mut().expect("secure channel enabled before")
     }
 
+    /// Hands back response data as `delivery`.
     pub fn delivering(mut self, delivery: Delivery) -> Self {
         self.delivery = delivery;
         self
@@ -393,6 +404,7 @@ impl EmulatedDnie {
         self
     }
 
+    /// Stores `idesp` as the card's IDESP.
     pub fn with_idesp(self, idesp: &[u8]) -> Self {
         self.with_file(&[IDESP], idesp.to_vec())
     }

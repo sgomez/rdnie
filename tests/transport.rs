@@ -1,9 +1,7 @@
 //! Plain ISO 7816 response handling below any secure channel.
 
-mod emulator;
-
-use emulator::{DNIE_3_ATR, Delivery, EmulatedDnie};
 use rdnie::{Command, Error, Response, StatusWord, Transport};
+use rdnie_emulator::{DNIE_3_ATR, Delivery, EmulatedDnie};
 
 fn get_challenge(cla: u8, le: Option<u16>) -> Command {
     Command {
