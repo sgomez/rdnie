@@ -149,9 +149,9 @@ fn loads_a_compressed_certificate_just_under_the_cap() {
     assert_lists(card, &ders(&certificates));
 }
 
-/// A compressed certificate that inflates to `length` bytes: the subject is repeated as the
-/// issuer, so padding grows it two bytes at a time, and a serial number of 0x80 or more adds a byte.
+/// A compressed certificate that inflates to exactly `length` bytes.
 fn compressed_of_length(length: usize) -> HolderCertificate {
+    // Padding grows the DER two bytes at a time (subject and issuer); a serial of 0x80 adds one.
     let id = if length % 2 == 0 { 0x80 } else { 1 };
     let mut asked = length / 2;
     loop {

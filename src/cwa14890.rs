@@ -686,7 +686,7 @@ pub(crate) mod tests {
     #[test]
     fn sends_the_smaller_of_the_signature_and_its_complement_to_the_card() {
         let keys = KeySet::for_card(None, Channel::User);
-        let icc = RsaPrivateKey::new(&mut OsRng, keys.modulus.len() * 8).unwrap();
+        let icc = RsaPrivateKey::new(&mut OsRng, (keys.modulus.len() + 1) * 8).unwrap();
         let half = BigUint::from_bytes_be(keys.modulus) / 2_u8;
         // Each handshake draws a fresh frame, so half of them sign above N.IFD / 2.
         for _ in 0..16 {
