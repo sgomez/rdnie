@@ -15,6 +15,7 @@ env:
   CARGO_TERM_COLOR: always
 
 # Every run mutates the checkout in place, so the cached target/ spares rebuilding the dependencies.
+# Exit 3 means only timeouts: the mutant hung the tests, so they caught it.
 
 jobs:
   diff:
@@ -37,7 +38,7 @@ jobs:
       - &pcsc
         run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
       - run: git diff "${{ github.event.before }}" "${{ github.sha }}" > "$RUNNER_TEMP/push.diff"
-      - run: just mutants --in-place --in-diff "$RUNNER_TEMP/push.diff"
+      - run: just mutants --in-place --in-diff "$RUNNER_TEMP/push.diff" || [ $? -eq 3 ]
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -52,14 +53,14 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - *toolchain
       - *cache
       - *tools
       - *pcsc
-      - run: just mutants --in-place --shard ${{ matrix.shard }}/4
+      - run: just mutants --in-place --shard ${{ matrix.shard }}/4 || [ $? -eq 3 ]
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -88,7 +89,7 @@ jobs:
             echo "${{ github.event_name }} on \`${{ github.sha }}\`: $RUN_URL"
             echo
             echo '```'
-            cat mutants/*/missed.txt mutants/*/timeout.txt 2>/dev/null || echo 'no mutant list: see the run'
+            cat mutants/*/missed.txt 2>/dev/null || echo 'no mutant list: see the run'
             echo '```'
           } > "$RUNNER_TEMP/body.md"
           number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')
