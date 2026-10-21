@@ -12,3 +12,11 @@ commit_parsers = [
     { message = '^perf', group = "performance" },
     { message = '.*', skip = true },
 ]
+
+[[package]]
+name = "rdnie"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "rdnie-emulator"
+changelog_path = "rdnie-emulator/CHANGELOG.md"
