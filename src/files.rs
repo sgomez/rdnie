@@ -399,6 +399,14 @@ mod tests {
     }
 
     #[test]
+    fn reads_an_81_length_whose_value_ends_the_fci() {
+        assert_eq!(
+            fci_length(&[0x6F, 0x05, 0x81, 0x03, 0x01, 0x23, 0x45]).unwrap(),
+            0x0123
+        );
+    }
+
+    #[test]
     fn sends_no_read_binary_at_an_offset_equal_to_the_file_length() {
         let content = vec![7; 2 * 0xDE];
         let mut card = PlainFile::new(content.clone());
