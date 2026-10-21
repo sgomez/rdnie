@@ -13,11 +13,12 @@ mod channel;
 mod chip;
 mod commands;
 mod pkcs15;
+mod terminal_keys;
 
 use std::collections::BTreeMap;
 
 use rdnie::{Error, Transport};
-use rsa::{Pkcs1v15Sign, RsaPrivateKey};
+use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
 
 use channel::CardChannel;
 pub use channel::ResponseShape;
@@ -27,6 +28,7 @@ pub use chip::{
     foreign_root_public_key, intermediate_certificate,
 };
 pub use pkcs15::{CDF, HolderCertificate, PRKDF, cdf, prkdf};
+pub use terminal_keys::terminal_keys;
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
 pub const DNIE_3_ATR: [u8; 20] = [
@@ -176,6 +178,25 @@ struct Apdu<'a> {
     le: Option<usize>,
 }
 
+// Methods, not functions, so the keys can become per card without breaking callers.
+#[allow(clippy::unused_self)]
+impl EmulatedDnie {
+    /// The component root the card's chain ends in, to pass to `Session::open_trusting`.
+    pub fn component_root(&self) -> RsaPublicKey {
+        component_root_public_key()
+    }
+
+    /// Public key of the holder's signing certificate.
+    pub fn signing_public_key(&self) -> RsaPublicKey {
+        pkcs15::signing_public_key()
+    }
+
+    /// Public key of the holder's authentication certificate.
+    pub fn authentication_public_key(&self) -> RsaPublicKey {
+        pkcs15::authentication_public_key()
+    }
+}
+
 impl EmulatedDnie {
     /// A card answering with `atr`, holding no files and expecting [`DEFAULT_PIN`].
     pub fn new(atr: &[u8]) -> Self {
@@ -207,6 +228,18 @@ impl EmulatedDnie {
             endless: None,
             response_shape: ResponseShape::Standard,
         }
+    }
+
+    /// A DNIe 3.0 that opens the secure channel with rdnie's terminal keys, expects
+    /// [`DEFAULT_PIN`] with 3 retries left, and holds the signing and authentication certificates
+    /// of a fictitious holder, document number `IDCES-99999999R`.
+    pub fn dnie_3() -> Self {
+        Self::new(&DNIE_3_ATR)
+            .with_secure_channel(&terminal_keys())
+            .with_certificates(&[
+                HolderCertificate::holder_authentication(1),
+                HolderCertificate::holder_signing(2),
+            ])
     }
 
     /// Lets the card open a CWA-14890 channel with any of `terminals`.
@@ -247,8 +280,9 @@ impl EmulatedDnie {
             .map_or(0, |chip| chip.internal_authentications)
     }
 
-    /// PIN attempts left; 0 means blocked.
+    /// PIN attempts left, 0 to 3; 0 means blocked.
     pub fn with_pin_retries(mut self, retries: u8) -> Self {
+        assert!(retries <= DEFAULT_RETRIES, "PIN retries go from 0 to 3");
         self.retries = retries;
         self
     }
