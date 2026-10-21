@@ -14,6 +14,8 @@ categories = ["cryptography", "hardware-support"]
 [features]
 default = ["pcsc"]
 pcsc = ["dep:pcsc"]
+# Adds `Session::open_trusting`, for tests against an emulated card; never enable it in production.
+emulator = []
 
 [[example]]
 name = "detect"

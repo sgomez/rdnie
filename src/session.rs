@@ -79,15 +79,26 @@ impl<T: Transport> Session<T> {
     /// Those of [`Transport::transaction`], [`Transport::reset`], [`Error::NotDnie`],
     /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`].
     pub fn open(transport: T) -> Result<Self, Error> {
-        Self::open_trusting(transport, ComponentRoots::embedded())
+        Self::open_with(transport, ComponentRoots::embedded())
+    }
+
+    /// [`Session::open`] trusting only `root` as the component root, for tests against an emulated
+    /// card.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Session::open`].
+    #[cfg(feature = "emulator")]
+    pub fn open_trusting(transport: T, root: rsa::RsaPublicKey) -> Result<Self, Error> {
+        Self::open_with(transport, ComponentRoots::only(root))
     }
 
     #[cfg(test)]
     pub(crate) fn open_with_roots(transport: T, roots: ComponentRoots) -> Result<Self, Error> {
-        Self::open_trusting(transport, roots)
+        Self::open_with(transport, roots)
     }
 
-    fn open_trusting(mut transport: T, roots: ComponentRoots) -> Result<Self, Error> {
+    fn open_with(mut transport: T, roots: ComponentRoots) -> Result<Self, Error> {
         check_dnie_3(&transport.reset()?)?;
         let idesp = transport.transaction(|card| Ok(read_idesp(card)))?;
         Ok(Self {
