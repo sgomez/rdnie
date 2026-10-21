@@ -32,9 +32,9 @@ test:
     cargo test --workspace --quiet --features rdnie/emulator
     cargo test -p rdnie-emulator --quiet
 
-# Builds the crate from its package, as crates.io will.
+# Builds both crates from their packages, as crates.io will.
 package:
-    cargo package --quiet -p rdnie
+    cargo publish --dry-run --workspace --quiet
 
 # The library on the `rust-version` of `Cargo.toml`, with and without PC/SC; the tests may need a newer Rust.
 msrv:
