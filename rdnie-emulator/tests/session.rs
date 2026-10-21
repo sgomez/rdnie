@@ -1,6 +1,8 @@
 //! A consumer opens, verifies the PIN and signs against the emulated card through `Session` only.
 
-use rdnie::{Error, HashAlgorithm, Holder, Pin, SIGNATURE_LABEL, Session};
+use rdnie::{
+    Error, HashAlgorithm, Holder, KeyGeneration, Pin, SIGNATURE_LABEL, Session, Transport,
+};
 use rdnie_emulator::{DEFAULT_PIN, EmulatedDnie};
 use rsa::{
     Pkcs1v15Sign, RsaPublicKey,
@@ -149,4 +151,42 @@ fn opens_the_secure_channel_only_trusting_its_component_root() {
         session.pin_retries(),
         Err(Error::SecureChannel(_))
     ));
+}
+
+#[test]
+fn opens_a_dnie_3_and_a_dnie_4_under_each_key_generation() {
+    for generation in [KeyGeneration::First, KeyGeneration::Second] {
+        for card in [EmulatedDnie::dnie_3(), EmulatedDnie::dnie_4()] {
+            let mut session = open(card.with_key_generation(generation));
+            assert_eq!(session.key_generation(), generation);
+            assert_eq!(session.pin_retries().unwrap(), 3);
+        }
+    }
+}
+
+#[test]
+fn uses_the_second_key_generation_by_default() {
+    assert_eq!(
+        open(EmulatedDnie::dnie_3()).key_generation(),
+        KeyGeneration::Second
+    );
+    assert_eq!(
+        open(EmulatedDnie::dnie_4()).key_generation(),
+        KeyGeneration::Second
+    );
+}
+
+#[test]
+fn signs_on_a_dnie_4_under_the_first_key_generation() {
+    let card = EmulatedDnie::dnie_4().with_key_generation(KeyGeneration::First);
+    let key = card.signing_public_key();
+    let signature = sign(&mut open(card), SIGNATURE_LABEL, DEFAULT_PIN).unwrap();
+    assert!(verifies(&key, &signature));
+}
+
+#[test]
+fn a_dnie_4_reports_an_atr_of_its_own() {
+    let mut three = EmulatedDnie::dnie_3();
+    let mut four = EmulatedDnie::dnie_4();
+    assert_ne!(three.reset().unwrap(), four.reset().unwrap());
 }
