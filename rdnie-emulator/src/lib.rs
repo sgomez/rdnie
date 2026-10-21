@@ -105,6 +105,29 @@ pub struct EmulatedDnie {
     unauthenticated_read: Option<u16>,
     endless: Option<Endless>,
     response_shape: ResponseShape,
+    scheduled: Vec<(Step, Strike)>,
+}
+
+/// A step of a session, named by what the consumer does rather than by APDU.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// `Session::open`.
+    Opening,
+    /// The first read of the holder's certificates.
+    Certificates,
+    /// Reading the remaining PIN retries.
+    PinRetries,
+    /// Sending the PIN with `VERIFY`.
+    Verify,
+    /// Having the card sign.
+    Signing,
+}
+
+/// What strikes the card at a [`Step`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Strike {
+    Removal,
+    Reset,
 }
 
 /// A request to try again the card repeats to every protected command it targets.
@@ -227,6 +250,7 @@ impl EmulatedDnie {
             unauthenticated_read: None,
             endless: None,
             response_shape: ResponseShape::Standard,
+            scheduled: Vec::new(),
         }
     }
 
@@ -347,6 +371,34 @@ impl EmulatedDnie {
 
     fn faulty(&self, fault: HandshakeFault) -> bool {
         self.handshake_fault == Some(fault)
+    }
+
+    /// Pulls the card out when `step` starts: that call and every later one report it removed.
+    pub fn removing_card_at(mut self, step: Step) -> Self {
+        self.scheduled.push((step, Strike::Removal));
+        self
+    }
+
+    /// Resets the card when `step` starts: that call reports it reset, once.
+    pub fn resetting_card_at(mut self, step: Step) -> Self {
+        self.scheduled.push((step, Strike::Reset));
+        self
+    }
+
+    fn strike(&mut self, step: Step) -> Result<(), Error> {
+        let Some(at) = self.scheduled.iter().position(|(due, _)| *due == step) else {
+            return Ok(());
+        };
+        match self.scheduled.remove(at).1 {
+            Strike::Removal => {
+                self.presence = Presence::Removed;
+                Err(Error::CardRemoved)
+            }
+            Strike::Reset => {
+                self.reset()?;
+                Err(Error::CardReset)
+            }
+        }
     }
 
     /// Pulls the card out: every later call reports it removed.
