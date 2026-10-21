@@ -116,10 +116,10 @@ impl EmulatedDnie {
             answer
         };
         let mut response = channel.wrap(&answer, self.response_shape);
-        if inner.ins == READ_BINARY
-            && let Some(status) = self.unauthenticated_read.take()
-        {
-            response = with_status(answer[..answer.len() - 2].to_vec(), status);
+        if inner.ins == READ_BINARY {
+            if let Some(status) = self.unauthenticated_read.take() {
+                response = with_status(answer[..answer.len() - 2].to_vec(), status);
+            }
         }
         match self.channel {
             Some(_) => self.mark_last_handshake_inside_channel(),

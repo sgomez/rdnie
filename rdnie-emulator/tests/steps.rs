@@ -105,3 +105,29 @@ fn a_reset_strikes_once() {
     assert!(matches!(session.pin_retries(), Err(Error::CardReset)));
     assert_eq!(session.pin_retries().unwrap(), 3);
 }
+
+#[test]
+fn a_signing_strike_comes_after_verify() {
+    let mut session = open(schedule(Strike::Removal, Step::Signing)).unwrap();
+    let key = session
+        .certificates()
+        .unwrap()
+        .into_iter()
+        .find(|certificate| certificate.label == SIGNATURE_LABEL)
+        .unwrap()
+        .key;
+    let digest = Sha256::digest(b"document");
+    let mut sign = |pin: &str| {
+        session.sign(
+            &digest,
+            HashAlgorithm::Sha256,
+            &key,
+            Pin::new(pin.to_owned()),
+        )
+    };
+    assert!(matches!(
+        sign("wrong-pin"),
+        Err(Error::WrongPin { retries_left: 2 })
+    ));
+    assert!(matches!(sign(DEFAULT_PIN), Err(Error::CardRemoved)));
+}

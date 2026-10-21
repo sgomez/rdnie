@@ -20,7 +20,6 @@ file-tokens *flags:
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets --no-default-features -- -D warnings
-    cargo clippy --workspace --all-targets --features rdnie/emulator -- -D warnings
     cargo clippy -p rdnie-emulator --all-targets -- -D warnings
 
 # Fails on rustdoc warnings, which docs.rs would show.
@@ -29,14 +28,13 @@ doc:
 
 test:
     cargo test --workspace --quiet
-    cargo test --workspace --quiet --features rdnie/emulator
     cargo test -p rdnie-emulator --quiet
 
 # Builds both crates from their packages, as crates.io will.
 package:
     cargo publish --dry-run --workspace --quiet
 
-# The library on the `rust-version` of `Cargo.toml`, with and without PC/SC; the tests may need a newer Rust.
+# Both libraries on their `rust-version`, rdnie with and without PC/SC; the tests may need a newer Rust.
 msrv:
     #!/usr/bin/env sh
     set -eu
@@ -44,6 +42,9 @@ msrv:
     rustup toolchain install "$version" --profile minimal
     cargo +"$version" check --lib
     cargo +"$version" check --lib --no-default-features
+    emulator=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' rdnie-emulator/Cargo.toml)
+    rustup toolchain install "$emulator" --profile minimal
+    cargo +"$emulator" check -p rdnie-emulator --lib
 
 # Advisories, licenses and sources of the dependencies (`deny.toml`).
 deny:
