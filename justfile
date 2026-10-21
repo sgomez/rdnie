@@ -20,6 +20,7 @@ file-tokens *flags:
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+    cargo clippy --workspace --all-targets --features rdnie/emulator -- -D warnings
 
 # Fails on rustdoc warnings, which docs.rs would show.
 doc:
@@ -27,6 +28,7 @@ doc:
 
 test:
     cargo test --workspace --quiet
+    cargo test --workspace --quiet --features rdnie/emulator
 
 # Builds the crate from its package, as crates.io will.
 package:
