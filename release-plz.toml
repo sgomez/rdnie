@@ -1,0 +1,14 @@
+[workspace]
+# Publish only when the release PR merges.
+release_always = false
+
+[changelog]
+# Only what a consumer of the crate sees.
+commit_parsers = [
+    { message = '^[a-z]+(\(.+\))?!:', group = "changed" },
+    { message = '^feat', group = "added" },
+    { message = '^fix\(pr\)', skip = true },
+    { message = '^fix', group = "fixed" },
+    { message = '^perf', group = "performance" },
+    { message = '.*', skip = true },
+]
