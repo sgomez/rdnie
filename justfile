@@ -4,13 +4,17 @@ _default:
     @just --list
 
 # What the CI runs.
-check: fmt-check lint test
+check: fmt-check (file-tokens "--all") lint test
 
 fmt:
     cargo fmt
 
 fmt-check:
     cargo fmt --check
+
+# Files over 5,000 tokens: the staged ones, or every tracked one with `--all`.
+file-tokens *flags:
+    scripts/check-file-tokens.sh {{ flags }}
 
 # With and without PC/SC, so the protocol never depends on the reader.
 lint:
