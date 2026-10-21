@@ -254,6 +254,18 @@ fn fetches_the_keyless_intermediate_ca_by_its_public_label_but_does_not_list_it(
 }
 
 #[test]
+fn lists_and_fetches_the_signature_certificate_by_its_public_label() {
+    let signature = HolderCertificate::new(1, 120).labelled("CertFirmaDigital");
+    let certificates = [signature.clone(), HolderCertificate::new(2, 150)];
+    assert_eq!(rdnie::SIGNATURE_LABEL, "CertFirmaDigital");
+    assert_eq!(labels(&certificates)[0], rdnie::SIGNATURE_LABEL);
+    assert_eq!(
+        fetch(&certificates, rdnie::SIGNATURE_LABEL),
+        Some(signature.der)
+    );
+}
+
+#[test]
 fn fetches_a_keyed_certificate_with_the_der_it_is_listed_with() {
     let certificate = HolderCertificate::new(1, 120).labelled("CertFirma");
     assert_eq!(

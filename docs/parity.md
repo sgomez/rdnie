@@ -129,7 +129,7 @@ Java paths are relative to `jmulticard/src/main/java/es/gob/jmulticard/` unless 
 | Dnie.loadCertificates: CDF `5015/6004`, certificates, PrKDF `5015/6001` | `certificates.rs` `load` | Any bad file fails the whole load, in both. |
 | CDF id ↔ PrKDF id pairing | `certificates.rs` `load` | Shared identifiers: open 2. |
 | CryptoCard.getAliases, getCertificate(alias) | `Session::certificates` → `Certificate { der, label, key }`, `Session::certificate(label)` | A repeated label: open 2. |
-| Dnie.hideCertsWithoutKey, keyless certs reachable by alias | `Session::certificates`, `Session::certificate` | `INTERMEDIATE_CA_LABEL` names `CertCAIntermediaDGP`. |
+| Dnie.hideCertsWithoutKey, keyless certs reachable by alias | `Session::certificates`, `Session::certificate` | `INTERMEDIATE_CA_LABEL` names `CertCAIntermediaDGP`; `SIGNATURE_LABEL` names `CertFirmaDigital`. |
 | CertificateObject.getAlias | `pkcs15.rs` `label` | Stored exactly as the CDF has it. |
 | Cdf / PrKdf, up to 10 objects | `pkcs15.rs` `entries` | |
 | CommandApdu short encoding | `apdu.rs` `Command::to_bytes` | |

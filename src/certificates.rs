@@ -66,6 +66,9 @@ const MAX_INFLATED: u64 = 16 * 1024;
 /// Label of the DNIe intermediate CA certificate, which has no key on the card.
 pub const INTERMEDIATE_CA_LABEL: &str = "CertCAIntermediaDGP";
 
+/// Label of the holder's signature certificate, whose key signs.
+pub const SIGNATURE_LABEL: &str = "CertFirmaDigital";
+
 /// Certificate of the holder, paired with its private key on the card.
 #[non_exhaustive]
 pub struct Certificate {
