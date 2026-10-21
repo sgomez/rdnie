@@ -771,7 +771,7 @@ mod tests {
             Err(Error::Transport(_))
         ));
         assert!(matches!(protected.reset(), Err(Error::Transport(_))));
-        assert!(card.sent.is_empty());
+        assert_eq!(card.sent.len(), 0);
     }
 
     #[test]
