@@ -17,7 +17,7 @@ mod terminal_keys;
 
 use std::collections::BTreeMap;
 
-use rdnie::{Error, Transport};
+use rdnie::{Error, KeyGeneration, Transport};
 use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
 
 use channel::CardChannel;
@@ -35,6 +35,16 @@ pub const DNIE_3_ATR: [u8; 20] = [
     0x3B, 0x7F, 0x96, 0x00, 0x00, 0x00, 0x6A, 0x44, 0x4E, 0x49, 0x65, 0x10, 0x01, 0x01, 0x55, 0x04,
     0x21, 0x03, 0x90, 0x00,
 ];
+
+/// DNIe 4.0 ATR as rdnie models it, not checked against a real DNIe 4.0: the 3.0 ATR with the
+/// chip bytes of the Atos card, the same operating system.
+pub const DNIE_4_ATR: [u8; 20] = [
+    0x3B, 0x7F, 0x96, 0x00, 0x00, 0x00, 0x6A, 0x44, 0x4E, 0x49, 0x65, 0x20, 0x02, 0x4C, 0x34, 0x04,
+    0x21, 0x03, 0x90, 0x00,
+];
+
+const FIRST_GENERATION_IDESP: &[u8] = b"BMP000001";
+const SECOND_GENERATION_IDESP: &[u8] = b"BMP100001";
 
 const SELECT: u8 = 0xA4;
 const READ_BINARY: u8 = 0xB0;
@@ -234,7 +244,28 @@ impl EmulatedDnie {
     /// [`DEFAULT_PIN`] with 3 retries left, and holds the signing and authentication certificates
     /// of a fictitious holder, document number `IDCES-99999999R`.
     pub fn dnie_3() -> Self {
-        Self::new(&DNIE_3_ATR)
+        Self::dnie(&DNIE_3_ATR)
+    }
+
+    /// A DNIe 4.0, which differs from [`EmulatedDnie::dnie_3`] only in its ATR. This is rdnie's
+    /// model of the card, not verified against a real DNIe 4.0.
+    pub fn dnie_4() -> Self {
+        Self::dnie(&DNIE_4_ATR)
+    }
+
+    /// Makes the card report the IDESP of `generation`, so rdnie picks that terminal key set.
+    /// Cards start in the second generation.
+    pub fn with_key_generation(self, generation: KeyGeneration) -> Self {
+        self.with_idesp(if generation == KeyGeneration::First {
+            FIRST_GENERATION_IDESP
+        } else {
+            SECOND_GENERATION_IDESP
+        })
+    }
+
+    fn dnie(atr: &[u8]) -> Self {
+        Self::new(atr)
+            .with_key_generation(KeyGeneration::Second)
             .with_secure_channel(&terminal_keys())
             .with_certificates(&[
                 HolderCertificate::holder_authentication(1),
