@@ -164,9 +164,11 @@ fn compressed_of_length(length: usize) -> HolderCertificate {
             size.abs_diff(length) > 1,
             "no padding reaches {length} bytes"
         );
-        asked = asked
-            .checked_add_signed((length as isize - size as isize) / 2)
-            .unwrap();
+        asked = if size < length {
+            asked + (length - size) / 2
+        } else {
+            asked - (size - length) / 2
+        };
     }
 }
 
