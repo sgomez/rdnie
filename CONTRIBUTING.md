@@ -25,6 +25,8 @@ The tests run against an emulator. `just detect` looks for a DNIe without sendin
 
 `just mutants` reports the mutants the tests miss. It is slow; pass `--in-diff` with a diff to mutate only what changed.
 
+The CI mutates the diff of every push to `main` and the whole crate weekly. Missed mutants land as comments on one open issue.
+
 ## Fuzzing
 
 The parsers of card data have `cargo-fuzz` targets in `fuzz/`, on Linux and macOS only. They need nightly and `cargo install cargo-fuzz`.
