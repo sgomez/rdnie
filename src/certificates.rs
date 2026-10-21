@@ -67,6 +67,7 @@ const MAX_INFLATED: u64 = 16 * 1024;
 pub const INTERMEDIATE_CA_LABEL: &str = "CertCAIntermediaDGP";
 
 /// Certificate of the holder, paired with its private key on the card.
+#[non_exhaustive]
 pub struct Certificate {
     /// X.509 certificate in DER.
     pub der: Vec<u8>,
