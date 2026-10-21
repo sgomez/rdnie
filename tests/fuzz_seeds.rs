@@ -1,13 +1,12 @@
 //! Seed corpora of the `fuzz/` targets, generated from the emulator only: `just fuzz-seed`.
 
-mod emulator;
+mod recorder;
 
 use std::collections::BTreeSet;
 
-use emulator::{
-    DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, Recorder, cdf, prkdf, write_corpus,
-};
 use rdnie::Session;
+use rdnie_emulator::{DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, cdf, prkdf};
+use recorder::{Recorder, write_corpus};
 use x509_cert::{
     attr::AttributeTypeAndValue,
     der::{

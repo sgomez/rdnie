@@ -115,9 +115,12 @@ impl ComponentRoots {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "emulator"))]
     pub(crate) fn only(root: RsaPublicKey) -> Self {
-        Self::pair(root.clone(), root)
+        Self {
+            first: root.clone(),
+            second: root,
+        }
     }
 
     #[cfg(test)]

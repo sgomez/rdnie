@@ -3,8 +3,9 @@
 use std::{io::Write, str::FromStr, sync::LazyLock, time::Duration};
 
 use flate2::{Compression, write::ZlibEncoder};
+use rdnie::SIGNATURE_LABEL;
 use rsa::{
-    RsaPrivateKey,
+    RsaPrivateKey, RsaPublicKey,
     pkcs1v15::{Signature, SigningKey},
     pkcs8::EncodePublicKey,
     rand_core::OsRng,
@@ -19,7 +20,9 @@ use x509_cert::{
     time::Validity,
 };
 
+/// Path of the certificate directory file.
 pub const CDF: [[u8; 2]; 2] = [[0x50, 0x15], [0x60, 0x04]];
+/// Path of the private key directory file.
 pub const PRKDF: [[u8; 2]; 2] = [[0x50, 0x15], [0x60, 0x01]];
 
 const MASTER_FILE: [u8; 2] = [0x3F, 0x00];
@@ -28,15 +31,31 @@ const OCTET_STRING: u8 = 0x04;
 // Cards pad their files up to the size they were created with.
 const PADDING: usize = 16;
 const HOLDER_KEY_BITS: usize = 2048;
+const AUTHENTICATION_LABEL: &str = "CertAutenticacion";
 
 static HOLDER_KEY: LazyLock<RsaPrivateKey> =
     LazyLock::new(|| RsaPrivateKey::new(&mut OsRng, HOLDER_KEY_BITS).unwrap());
+static AUTHENTICATION_KEY: LazyLock<RsaPrivateKey> =
+    LazyLock::new(|| RsaPrivateKey::new(&mut OsRng, HOLDER_KEY_BITS).unwrap());
+
+/// Public key of the fictitious holder's signing certificate.
+pub fn signing_public_key() -> RsaPublicKey {
+    HOLDER_KEY.to_public_key()
+}
+
+/// Public key of the fictitious holder's authentication certificate.
+pub fn authentication_public_key() -> RsaPublicKey {
+    AUTHENTICATION_KEY.to_public_key()
+}
 
 /// A certificate on the card, with fake DER content of the given length.
 #[derive(Clone)]
 pub struct HolderCertificate {
+    /// Certificate as DER.
     pub der: Vec<u8>,
+    /// File below the master file that stores it.
     pub file: [u8; 2],
+    /// File of its private key below `5015`, if the PrKDF lists one.
     pub key_file: Option<[u8; 2]>,
     /// Private key the card signs with, for certificates of a real key pair.
     pub key: Option<RsaPrivateKey>,
@@ -60,6 +79,33 @@ impl HolderCertificate {
         Self {
             key: Some(HOLDER_KEY.clone()),
             ..Self::new(id, 0)
+        }
+    }
+
+    /// The fictitious holder's signing certificate, labelled as on a real DNIe.
+    pub fn holder_signing(id: u8) -> Self {
+        Self::of_holder(id, &HOLDER_KEY, "FIRMA", SIGNATURE_LABEL)
+    }
+
+    /// The fictitious holder's authentication certificate, labelled as on a real DNIe.
+    pub fn holder_authentication(id: u8) -> Self {
+        Self::of_holder(
+            id,
+            &AUTHENTICATION_KEY,
+            "AUTENTICACIÓN",
+            AUTHENTICATION_LABEL,
+        )
+    }
+
+    fn of_holder(id: u8, key: &RsaPrivateKey, role: &str, label: &str) -> Self {
+        let subject = Name::from_str(&format!(
+            "CN=EMULADO PRUEBA\\, TITULAR ({role}),givenName=TITULAR,SN=EMULADO,\
+             serialNumber=IDCES-99999999R,C=ES"
+        ))
+        .unwrap();
+        Self {
+            key: Some(key.clone()),
+            ..Self::with_der(id, x509_der_signed(id, subject, key)).labelled(label)
         }
     }
 
@@ -111,6 +157,7 @@ impl HolderCertificate {
         self
     }
 
+    /// Stores the certificate compressed.
     pub fn compressed(mut self) -> Self {
         self.compressed = true;
         self
@@ -122,6 +169,7 @@ impl HolderCertificate {
         self
     }
 
+    /// Leaves its key out of the PrKDF.
     pub fn without_key(mut self) -> Self {
         self.key_file = None;
         self
@@ -153,6 +201,7 @@ impl HolderCertificate {
     }
 }
 
+/// CDF listing `certificates`.
 pub fn cdf(certificates: &[HolderCertificate]) -> Vec<u8> {
     padded(certificates.iter().map(|certificate| {
         let path = certificate
@@ -173,6 +222,7 @@ pub fn cdf(certificates: &[HolderCertificate]) -> Vec<u8> {
     }))
 }
 
+/// PrKDF listing the keys of `certificates`.
 pub fn prkdf(certificates: &[HolderCertificate]) -> Vec<u8> {
     padded(certificates.iter().rev().filter_map(|certificate| {
         let path = [MASTER_FILE, CDF[0], certificate.key_file?].concat();
@@ -240,7 +290,11 @@ fn x509_der(id: u8, common_name: &str) -> Vec<u8> {
 }
 
 fn x509_der_of(id: u8, subject: Name) -> Vec<u8> {
-    let key = HOLDER_KEY.clone();
+    x509_der_signed(id, subject, &HOLDER_KEY)
+}
+
+fn x509_der_signed(id: u8, subject: Name, key: &RsaPrivateKey) -> Vec<u8> {
+    let key = key.clone();
     let spki = SubjectPublicKeyInfoOwned::from_der(
         key.to_public_key().to_public_key_der().unwrap().as_bytes(),
     )

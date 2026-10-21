@@ -62,11 +62,20 @@ impl EmulatedDnie {
         }
     }
 
-    fn answer_protected(&mut self, apdu: &[u8]) -> Vec<u8> {
+    fn answer_protected(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         let mut channel = self.channel.take().expect("protected only with a channel");
         let Some(inner) = channel.unwrap(apdu) else {
-            return vec![0x66, 0x88];
+            return Ok(vec![0x66, 0x88]);
         };
+        let step = match (inner.ins, inner.p1, inner.p2) {
+            (VERIFY, _, _) if inner.data.is_empty() => Some(Step::PinRetries),
+            (VERIFY, _, _) => Some(Step::Verify),
+            (MSE, 0x41, 0xB6) => Some(Step::Signing),
+            _ => None,
+        };
+        if let Some(step) = step {
+            self.strike(step)?;
+        }
         if inner.ins == VERIFY {
             self.pin_queries.push(PinQuery {
                 transaction: self.transactions,
@@ -107,16 +116,16 @@ impl EmulatedDnie {
             answer
         };
         let mut response = channel.wrap(&answer, self.response_shape);
-        if inner.ins == READ_BINARY
-            && let Some(status) = self.unauthenticated_read.take()
-        {
-            response = with_status(answer[..answer.len() - 2].to_vec(), status);
+        if inner.ins == READ_BINARY {
+            if let Some(status) = self.unauthenticated_read.take() {
+                response = with_status(answer[..answer.len() - 2].to_vec(), status);
+            }
         }
         match self.channel {
             Some(_) => self.mark_last_handshake_inside_channel(),
             None => self.channel = Some(channel),
         }
-        response
+        Ok(response)
     }
 
     /// A channel negotiated inside another replaces it once its last answer is wrapped.
@@ -286,12 +295,12 @@ impl Transport for EmulatedDnie {
                     Ok(vec![0x66, 0x88])
                 }
                 Some(Fault::BadResponseMac) => {
-                    let mut response = self.answer_protected(apdu);
+                    let mut response = self.answer_protected(apdu)?;
                     let mac_end = response.len() - 3;
                     response[mac_end] ^= 0xFF;
                     Ok(response)
                 }
-                None => Ok(self.answer_protected(apdu)),
+                None => self.answer_protected(apdu),
             };
         }
         let Some(apdu) = parse(apdu) else {
@@ -306,6 +315,9 @@ impl Transport for EmulatedDnie {
                 return Err(Error::Transport("reader unplugged".to_owned()));
             }
         }
+        if apdu.ins == SELECT && apdu.data == pkcs15::CDF[1] && self.current == [pkcs15::CDF[0]] {
+            self.strike(Step::Certificates)?;
+        }
         if apdu.ins != GET_RESPONSE {
             self.pending.clear();
             self.channel = None;
@@ -316,6 +328,9 @@ impl Transport for EmulatedDnie {
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
+        }
+        if self.scheduled.contains(&(Step::Opening, Strike::Removal)) {
+            self.strike(Step::Opening)?;
         }
         self.pending.clear();
         self.current.clear();
@@ -335,6 +350,9 @@ impl Transport for EmulatedDnie {
     ) -> Result<R, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
+        }
+        if self.transactions == 0 {
+            self.strike(Step::Opening)?;
         }
         self.transactions += 1;
         if self.retry_lost_between_transactions && !self.pin_queries.is_empty() {

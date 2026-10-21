@@ -451,6 +451,7 @@ dependencies = [
  "flate2",
  "pcsc",
  "rand_core",
+ "rdnie-emulator",
  "retail-mac",
  "rpassword",
  "rsa",
@@ -460,6 +461,21 @@ dependencies = [
  "thiserror",
  "x509-cert",
  "zeroize",
+]
+
+[[package]]
+name = "rdnie-emulator"
+version = "0.1.0"
+dependencies = [
+ "cbc",
+ "des",
+ "flate2",
+ "rand_core",
+ "rdnie",
+ "retail-mac",
+ "rsa",
+ "sha1 0.11.0",
+ "x509-cert",
 ]
 
 [[package]]

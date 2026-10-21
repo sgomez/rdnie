@@ -7,32 +7,34 @@ _default:
 check: fmt-check (file-tokens "--all") lint doc test
 
 fmt:
-    cargo fmt
+    cargo fmt --all
 
 fmt-check:
-    cargo fmt --check
+    cargo fmt --all --check
 
 # Files over 5,000 tokens: the staged ones, or every tracked one with `--all`.
 file-tokens *flags:
     scripts/check-file-tokens.sh {{ flags }}
 
-# With and without PC/SC, so the protocol never depends on the reader.
+# With and without PC/SC, so the protocol never depends on the reader; the emulator also without `faults`.
 lint:
-    cargo clippy --all-targets -- -D warnings
-    cargo clippy --all-targets --no-default-features -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+    cargo clippy -p rdnie-emulator --all-targets -- -D warnings
 
 # Fails on rustdoc warnings, which docs.rs would show.
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --quiet
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --quiet
 
 test:
-    cargo test --quiet
+    cargo test --workspace --quiet
+    cargo test -p rdnie-emulator --quiet
 
-# Builds the crate from its package, as crates.io will.
+# Builds both crates from their packages, as crates.io will.
 package:
-    cargo package --quiet
+    cargo publish --dry-run --workspace --quiet
 
-# The library on the `rust-version` of `Cargo.toml`, with and without PC/SC; the tests may need a newer Rust.
+# Both libraries on their `rust-version`, rdnie with and without PC/SC; the tests may need a newer Rust.
 msrv:
     #!/usr/bin/env sh
     set -eu
@@ -40,6 +42,9 @@ msrv:
     rustup toolchain install "$version" --profile minimal
     cargo +"$version" check --lib
     cargo +"$version" check --lib --no-default-features
+    emulator=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' rdnie-emulator/Cargo.toml)
+    rustup toolchain install "$emulator" --profile minimal
+    cargo +"$emulator" check -p rdnie-emulator --lib
 
 # Advisories, licenses and sources of the dependencies (`deny.toml`).
 deny:
@@ -51,7 +56,7 @@ mutants *args:
     cargo mutants "$@"
 
 test-one filter:
-    cargo test --quiet {{ filter }}
+    cargo test --workspace --quiet {{ filter }}
 
 # Runs one `fuzz/` target for `secs` seconds; Linux and macOS only, with nightly and cargo-fuzz.
 fuzz target secs="60":

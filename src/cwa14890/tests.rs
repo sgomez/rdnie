@@ -17,10 +17,11 @@ use super::{check_answers, external_authentication, validate_internal_authentica
 use crate::{
     Error, Session, Transport,
     emulator::{
-        EmulatedDnie, HandshakeFault, Recorder, component_certificate, component_root_public_key,
+        EmulatedDnie, HandshakeFault, component_certificate, component_root_public_key,
         foreign_root_public_key, intermediate_certificate,
     },
     key_sets::{Channel, ComponentRoots, KeySet},
+    recorder::Recorder,
     session::tests::{card_with_channel, open},
 };
 

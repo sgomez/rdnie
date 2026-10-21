@@ -1,19 +1,17 @@
-//! A transport that keeps every exchange with the emulator, and the fuzz corpora written from them.
+//! A transport that keeps every exchange with the card, and the fuzz corpora written from them.
 
 use std::{collections::BTreeSet, fs, path::Path};
 
 use rdnie::{Error, Transport};
 
-use super::EmulatedDnie;
-
-/// Keeps every command and the raw response the emulator gave it.
-pub struct Recorder {
-    pub card: EmulatedDnie,
+/// Keeps every command and the raw response the card gave it.
+pub struct Recorder<T> {
+    pub card: T,
     pub exchanges: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-impl Recorder {
-    pub fn new(card: EmulatedDnie) -> Self {
+impl<T> Recorder<T> {
+    pub fn new(card: T) -> Self {
         Self {
             card,
             exchanges: Vec::new(),
@@ -21,7 +19,7 @@ impl Recorder {
     }
 }
 
-impl Transport for Recorder {
+impl<T: Transport> Transport for Recorder<T> {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         let response = self.card.transmit_raw(apdu)?;
         self.exchanges.push((apdu.to_vec(), response.clone()));
