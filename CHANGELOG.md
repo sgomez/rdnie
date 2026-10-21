@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/sgomez/rdnie/compare/rdnie-v0.1.0...rdnie-v0.1.1) - 2026-10-21
+
+### Added
+
+- *(emulator)* move rdnie-only knobs behind the faults feature
+- *(emulator)* open, verify the PIN and sign against rdnie-emulator from outside rdnie
+- *(session)* add Session::open_trusting behind the emulator feature
+
 ## [0.1.0] - 2026-10-21
 
 ### Added
