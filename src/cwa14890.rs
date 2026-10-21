@@ -426,7 +426,15 @@ pub(crate) mod tests {
         spki::SubjectPublicKeyInfoOwned,
     };
 
-    use super::check_answers;
+    use rsa::{
+        RsaPrivateKey,
+        hazmat::{rsa_decrypt_and_check, rsa_encrypt},
+        rand_core::OsRng,
+        traits::PublicKeyParts,
+    };
+    use sha1::{Digest, Sha1};
+
+    use super::{check_answers, validate_internal_authentication};
     use crate::{
         Error, Session,
         emulator::{
@@ -584,6 +592,47 @@ pub(crate) mod tests {
             Session::open(card_with_channel()).unwrap(),
             NOT_FROM_THE_ROOT,
         );
+    }
+
+    fn answer_to_frame(frame: &[u8], icc: &RsaPrivateKey, terminal: &RsaPublicKey) -> Vec<u8> {
+        let signature =
+            rsa_decrypt_and_check(icc, Some(&mut OsRng), &BigUint::from_bytes_be(frame)).unwrap();
+        let smaller = (icc.n() - &signature).min(signature);
+        rsa_encrypt(terminal, &smaller).unwrap().to_bytes_be()
+    }
+
+    fn validated_frame(frame_edit: impl FnOnce(&mut Vec<u8>)) -> Result<[u8; 32], Error> {
+        let [icc, terminal] =
+            std::array::from_fn(|_| RsaPrivateKey::new(&mut OsRng, 1024).unwrap());
+        let challenge = [0x5A; 16];
+        let (prnd1, kicc) = ([0x11; 74], [0x22; 32]);
+        let hash = Sha1::new()
+            .chain_update(prnd1)
+            .chain_update(kicc)
+            .chain_update(challenge)
+            .finalize();
+        let mut frame = [&[0x6A][..], &prnd1, &kicc, &hash, &[0xBC]].concat();
+        frame_edit(&mut frame);
+        let answer = answer_to_frame(&frame, &icc, &terminal.to_public_key());
+        validate_internal_authentication(&answer, &challenge, &terminal, &icc.to_public_key())
+    }
+
+    #[test]
+    fn accepts_a_fully_framed_internal_authentication() {
+        assert_eq!(validated_frame(|_| {}).unwrap(), [0x22; 32]);
+    }
+
+    #[test]
+    fn refuses_a_half_framed_internal_authentication() {
+        for (edit, missing) in [(0, "6A start"), (127, "BC end")] {
+            assert!(
+                matches!(
+                    validated_frame(|frame| frame[edit] ^= 0x01),
+                    Err(Error::SecureChannel(_))
+                ),
+                "{missing}"
+            );
+        }
     }
 
     fn open_failing(fault: HandshakeFault) -> Result<u8, Error> {

@@ -502,6 +502,75 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn reads_the_retries_only_from_a_63cx_status() {
+        for status in [0x6300, 0x63D2, 0x63A1, 0x64C2, 0x62C2] {
+            let (result, card) =
+                sign_with_pin(signing_card().answering_retries_with(status), DEFAULT_PIN);
+            assert!(
+                matches!(result, Err(Error::Status(StatusWord(s))) if s == status),
+                "{status:04X}"
+            );
+            assert!(card.pin_queries().iter().all(|query| !query.with_pin));
+        }
+    }
+
+    #[test]
+    fn reads_every_retries_count_up_to_15() {
+        assert_eq!(
+            retries(card_with_channel().answering_retries_with(0x63CF)).unwrap(),
+            15
+        );
+        assert_eq!(
+            retries(card_with_channel().answering_retries_with(0x63C1)).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn reports_a_blocked_pin_on_6983_to_the_retries_query() {
+        let card = card_with_channel().answering_retries_with(0x6983);
+        assert!(matches!(retries(card), Err(Error::PinBlocked)));
+    }
+
+    #[test]
+    fn reports_a_blocked_pin_when_verify_answers_63c0() {
+        let card = signing_card().answering_verify_with(0x63C0);
+        let (result, _) = sign_with_pin(card, DEFAULT_PIN);
+        assert!(matches!(result, Err(Error::PinBlocked)));
+    }
+
+    #[test]
+    fn reports_the_retries_left_when_verify_answers_63cx() {
+        for retries_left in [1, 2, 15] {
+            let card = signing_card().answering_verify_with(0x63C0 | u16::from(retries_left));
+            let (result, _) = sign_with_pin(card, DEFAULT_PIN);
+            assert!(
+                matches!(result, Err(Error::WrongPin { retries_left: left }) if left == retries_left),
+                "{retries_left}"
+            );
+        }
+    }
+
+    #[test]
+    fn reports_a_blocked_pin_when_verify_answers_6983() {
+        let card = signing_card().answering_verify_with(0x6983);
+        let (result, _) = sign_with_pin(card, DEFAULT_PIN);
+        assert!(matches!(result, Err(Error::PinBlocked)));
+    }
+
+    #[test]
+    fn reports_an_unknown_verify_status_as_such() {
+        for status in [0x6A80, 0x6300, 0x63D2, 0x64C2] {
+            let card = signing_card().answering_verify_with(status);
+            let (result, _) = sign_with_pin(card, DEFAULT_PIN);
+            assert!(
+                matches!(result, Err(Error::Status(StatusWord(s))) if s == status),
+                "{status:04X}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_a_malformed_pin_without_any_apdu() {
         let too_long = "a".repeat(17);
         for pin in ["short", "ñandú", too_long.as_str()] {

@@ -19,7 +19,7 @@ pub use chip::{
     Handshake, TerminalKey, component_certificate, component_root_public_key,
     foreign_root_public_key, intermediate_certificate,
 };
-pub use pkcs15::{HolderCertificate, cdf, prkdf};
+pub use pkcs15::{CDF, HolderCertificate, PRKDF, cdf, prkdf};
 pub use recorder::{Recorder, write_corpus};
 
 /// DNIe 3.0 ATR: byte 15 is `04`.
@@ -77,6 +77,7 @@ pub struct EmulatedDnie {
     channel: Option<CardChannel>,
     retries: u8,
     retries_answer: Option<u16>,
+    verify_answer: Option<u16>,
     pin: Vec<u8>,
     pin_verified: bool,
     user_channel: bool,
@@ -178,6 +179,7 @@ impl EmulatedDnie {
             channel: None,
             retries: DEFAULT_RETRIES,
             retries_answer: None,
+            verify_answer: None,
             pin: DEFAULT_PIN.as_bytes().to_vec(),
             pin_verified: false,
             user_channel: false,
@@ -255,6 +257,12 @@ impl EmulatedDnie {
     /// Answers the retries query with `status` whatever the PIN state.
     pub fn answering_retries_with(mut self, status: u16) -> Self {
         self.retries_answer = Some(status);
+        self
+    }
+
+    /// Answers a `VERIFY` carrying the PIN with `status`, without checking the PIN.
+    pub fn answering_verify_with(mut self, status: u16) -> Self {
+        self.verify_answer = Some(status);
         self
     }
 
@@ -483,7 +491,11 @@ impl EmulatedDnie {
             if inner.data.is_empty() {
                 self.retries_status().to_be_bytes().to_vec()
             } else {
-                self.verify_pin(&inner.data).to_be_bytes().to_vec()
+                let status = match self.verify_answer {
+                    Some(status) => status,
+                    None => self.verify_pin(&inner.data),
+                };
+                status.to_be_bytes().to_vec()
             }
         } else if (inner.ins, inner.p1, inner.p2) == (MSE, 0x41, 0xB6) {
             self.select_signing_key(&inner.data).to_be_bytes().to_vec()

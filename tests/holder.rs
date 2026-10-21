@@ -22,6 +22,11 @@ use x509_cert::{
 
 /// Holder data read from a certificate whose subject holds `attributes`, in DER order.
 fn holder(attributes: &[(ObjectIdentifier, &str)]) -> Holder {
+    holder_of(Tag::Utf8String, attributes)
+}
+
+/// As [`holder`], with every attribute but the serial number and country of type `text`.
+fn holder_of(text: Tag, attributes: &[(ObjectIdentifier, &str)]) -> Holder {
     let subject = RdnSequence(
         attributes
             .iter()
@@ -29,7 +34,7 @@ fn holder(attributes: &[(ObjectIdentifier, &str)]) -> Holder {
                 let tag = if oid == SERIAL_NUMBER || oid == COUNTRY_NAME {
                     Tag::PrintableString
                 } else {
-                    Tag::Utf8String
+                    text
                 };
                 let value = Any::new(tag, value.as_bytes()).unwrap();
                 let attribute = AttributeTypeAndValue { oid, value };
@@ -174,6 +179,27 @@ fn rejects_bytes_that_are_not_x509() {
 }
 
 #[test]
+fn reads_the_names_of_a_teletex_string_subject() {
+    let holder = holder_of(
+        Tag::TeletexString,
+        &[
+            (SERIAL_NUMBER, "00000000T"),
+            (SURNAME, "FIRSTSURNAME"),
+            (COMMON_NAME, "FIRSTSURNAME SECONDSURNAME, GIVEN"),
+        ],
+    );
+    assert_eq!(
+        fields(&holder),
+        [
+            Some("GIVEN"),
+            Some("FIRSTSURNAME"),
+            Some("SECONDSURNAME"),
+            Some("00000000T"),
+        ]
+    );
+}
+
+#[test]
 fn debug_output_hides_every_value() {
     let holder = holder(&[
         (SERIAL_NUMBER, "00000000T"),
@@ -184,4 +210,5 @@ fn debug_output_hides_every_value() {
     for value in ["00000000T", "FIRSTSURNAME", "SECONDSURNAME", "GIVEN"] {
         assert!(!debug.contains(value), "debug output shows {value}");
     }
+    assert_eq!(debug, "Holder { .. }");
 }

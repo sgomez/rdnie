@@ -2,7 +2,7 @@
 
 mod emulator;
 
-use emulator::{DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate};
+use emulator::{CDF, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, PRKDF, cdf, prkdf};
 use rdnie::{Error, Session};
 
 fn assert_lists(card: EmulatedDnie, expected: &[Vec<u8>]) {
@@ -239,4 +239,173 @@ fn with_duplicate_labels_the_last_one_wins() {
         .labelled("Same")
         .without_key();
     assert_eq!(fetch(&[first, last.clone()], "Same"), Some(last.der));
+}
+
+fn with_directory(directory: [[u8; 2]; 2], bytes: &[u8]) -> Error {
+    let certificates = [HolderCertificate::new(1, 120)];
+    let card = EmulatedDnie::new(&DNIE_3_ATR)
+        .with_certificates(&certificates)
+        .with_file(&directory, bytes.to_vec());
+    Session::open(card).unwrap().certificates().unwrap_err()
+}
+
+#[test]
+fn rejects_a_cdf_that_starts_with_no_sequence() {
+    for bytes in [&[0x00; 16][..], &[0x04, 0x01, 0x00]] {
+        assert!(matches!(with_directory(CDF, bytes), Error::MalformedPkcs15));
+    }
+}
+
+#[test]
+fn rejects_a_prkdf_that_starts_with_no_sequence() {
+    for bytes in [&[0x00; 16][..], &[0x04, 0x01, 0x00]] {
+        assert!(matches!(
+            with_directory(PRKDF, bytes),
+            Error::MalformedPkcs15
+        ));
+    }
+}
+
+fn numbered(count: u8) -> Vec<HolderCertificate> {
+    (1..=count)
+        .map(|id| HolderCertificate::new(id, 120).labelled(&format!("Cert{id}")))
+        .collect()
+}
+
+fn cert_labels(ids: std::ops::RangeInclusive<u8>) -> Vec<String> {
+    ids.map(|id| format!("Cert{id}")).collect()
+}
+
+#[test]
+fn loads_a_directory_of_exactly_the_object_limit() {
+    assert_eq!(labels(&numbered(10)), cert_labels(1..=10));
+}
+
+#[test]
+fn loads_a_directory_only_up_to_the_object_limit() {
+    // The PrKDF lists the keys last to first, so its limit leaves the first certificate keyless.
+    assert_eq!(labels(&numbered(11)), cert_labels(2..=10));
+}
+
+#[test]
+fn bounds_the_cdf_apart_from_the_prkdf() {
+    let certificates = numbered(11);
+    let reversed: Vec<HolderCertificate> = certificates.iter().rev().cloned().collect();
+    let card = EmulatedDnie::new(&DNIE_3_ATR)
+        .with_certificates(&certificates)
+        .with_file(&PRKDF, prkdf(&reversed));
+    let listed = Session::open(card).unwrap().certificates().unwrap();
+    let listed: Vec<String> = listed.into_iter().map(|c| c.label).collect();
+    assert_eq!(listed, cert_labels(1..=10));
+}
+
+const OCTET_STRING: u8 = 0x04;
+const SEQUENCE: u8 = 0x30;
+const UTF8_STRING: u8 = 0x0C;
+const TYPE_ATTRIBUTES: u8 = 0xA1;
+const NOT_EXPECTED: u8 = 0x31;
+
+const WELL_NESTED: [u8; 8] = [
+    SEQUENCE,
+    UTF8_STRING,
+    SEQUENCE,
+    OCTET_STRING,
+    TYPE_ATTRIBUTES,
+    SEQUENCE,
+    SEQUENCE,
+    OCTET_STRING,
+];
+
+fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
+    let length = u8::try_from(value.len()).unwrap();
+    [&[tag, length][..], value].concat()
+}
+
+/// A CDF or PrKDF object of one certificate, with the tags `tags` from the outermost in.
+fn object(tags: [u8; 8]) -> Vec<u8> {
+    let [label, label_text, class, id, typed, path_list, path, octets] = tags;
+    let path_bytes = [0x3F, 0x00, 0x70, 0x01];
+    let attributes = [
+        tlv(label, &tlv(label_text, b"Cert1")),
+        tlv(class, &tlv(id, &[0x4B, 0x49, 0x44, 0x01])),
+        tlv(
+            typed,
+            &tlv(path_list, &tlv(path, &tlv(octets, &path_bytes))),
+        ),
+    ];
+    tlv(SEQUENCE, &attributes.concat())
+}
+
+fn load_object(directory: [[u8; 2]; 2], tags: [u8; 8]) -> Result<usize, Error> {
+    let card = EmulatedDnie::new(&DNIE_3_ATR)
+        .with_certificates(&[HolderCertificate::new(1, 120)])
+        .with_file(&directory, object(tags));
+    Ok(Session::open(card)?.certificates()?.len())
+}
+
+#[test]
+fn loads_a_well_nested_object() {
+    assert_eq!(load_object(CDF, WELL_NESTED).unwrap(), 1);
+    assert_eq!(load_object(PRKDF, WELL_NESTED).unwrap(), 1);
+}
+
+#[test]
+fn rejects_a_cdf_object_whose_expected_child_has_another_tag() {
+    for position in 0..WELL_NESTED.len() {
+        let mut tags = WELL_NESTED;
+        tags[position] = NOT_EXPECTED;
+        assert!(
+            matches!(load_object(CDF, tags), Err(Error::MalformedPkcs15)),
+            "tag {position} not checked"
+        );
+    }
+}
+
+#[test]
+fn rejects_a_prkdf_object_whose_expected_child_has_another_tag() {
+    // The PrKDF label is not read, so its tags are not checked.
+    for position in 2..WELL_NESTED.len() {
+        let mut tags = WELL_NESTED;
+        tags[position] = NOT_EXPECTED;
+        assert!(
+            matches!(load_object(PRKDF, tags), Err(Error::MalformedPkcs15)),
+            "tag {position} not checked"
+        );
+    }
+}
+
+#[test]
+fn debug_output_hides_the_key_reference() {
+    let certificates = [HolderCertificate::new(1, 120)];
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
+    let listed = Session::open(card).unwrap().certificates().unwrap();
+    assert_eq!(format!("{:?}", listed[0].key), "KeyReference { .. }");
+}
+
+fn followed_by_a_non_sequence(mut directory: Vec<u8>) -> Vec<u8> {
+    let at = directory.len() - 16;
+    directory.splice(at..at, [0x04, 0x01, 0x00]);
+    directory
+}
+
+#[test]
+fn loads_the_objects_of_a_cdf_followed_by_a_tlv_that_is_not_a_sequence() {
+    let certificates = numbered(2);
+    let card = EmulatedDnie::new(&DNIE_3_ATR)
+        .with_certificates(&certificates)
+        .with_file(&CDF, followed_by_a_non_sequence(cdf(&certificates)));
+    let listed = Session::open(card).unwrap().certificates().unwrap();
+    let listed: Vec<String> = listed.into_iter().map(|c| c.label).collect();
+    assert_eq!(listed, cert_labels(1..=2));
+}
+
+#[test]
+fn loads_the_objects_of_a_prkdf_followed_by_a_tlv_that_is_not_a_sequence() {
+    let certificates = numbered(2);
+    let card = EmulatedDnie::new(&DNIE_3_ATR)
+        .with_certificates(&certificates)
+        .with_file(&PRKDF, followed_by_a_non_sequence(prkdf(&certificates)));
+    let listed = Session::open(card).unwrap().certificates().unwrap();
+    let listed: Vec<String> = listed.into_iter().map(|c| c.label).collect();
+    assert_eq!(listed, cert_labels(1..=2));
 }
