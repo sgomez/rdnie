@@ -5,6 +5,8 @@ pre-commit:
     - name: fmt-check
       fail_text: "fix the formatting with just fmt"
       run: PATH="$HOME/.cargo/bin:$PATH" just fmt-check
+    - name: file-tokens
+      run: PATH="$HOME/.cargo/bin:$PATH" just file-tokens
 
 pre-push:
   jobs:
