@@ -241,21 +241,18 @@ fn with_duplicate_labels_the_last_one_wins() {
     assert_eq!(fetch(&[first, last.clone()], "Same"), Some(last.der));
 }
 
-fn with_directory(directory: &[[u8; 2]; 2], bytes: &[u8]) -> Error {
+fn with_directory(directory: [[u8; 2]; 2], bytes: &[u8]) -> Error {
     let certificates = [HolderCertificate::new(1, 120)];
     let card = EmulatedDnie::new(&DNIE_3_ATR)
         .with_certificates(&certificates)
-        .with_file(directory, bytes.to_vec());
+        .with_file(&directory, bytes.to_vec());
     Session::open(card).unwrap().certificates().unwrap_err()
 }
 
 #[test]
 fn rejects_a_cdf_that_starts_with_no_sequence() {
     for bytes in [&[0x00; 16][..], &[0x04, 0x01, 0x00]] {
-        assert!(matches!(
-            with_directory(&CDF, bytes),
-            Error::MalformedPkcs15
-        ));
+        assert!(matches!(with_directory(CDF, bytes), Error::MalformedPkcs15));
     }
 }
 
@@ -263,7 +260,7 @@ fn rejects_a_cdf_that_starts_with_no_sequence() {
 fn rejects_a_prkdf_that_starts_with_no_sequence() {
     for bytes in [&[0x00; 16][..], &[0x04, 0x01, 0x00]] {
         assert!(matches!(
-            with_directory(&PRKDF, bytes),
+            with_directory(PRKDF, bytes),
             Error::MalformedPkcs15
         ));
     }
@@ -339,17 +336,17 @@ fn object(tags: [u8; 8]) -> Vec<u8> {
     tlv(SEQUENCE, &attributes.concat())
 }
 
-fn load_object(directory: &[[u8; 2]; 2], tags: [u8; 8]) -> Result<usize, Error> {
+fn load_object(directory: [[u8; 2]; 2], tags: [u8; 8]) -> Result<usize, Error> {
     let card = EmulatedDnie::new(&DNIE_3_ATR)
         .with_certificates(&[HolderCertificate::new(1, 120)])
-        .with_file(directory, object(tags));
+        .with_file(&directory, object(tags));
     Ok(Session::open(card)?.certificates()?.len())
 }
 
 #[test]
 fn loads_a_well_nested_object() {
-    assert_eq!(load_object(&CDF, WELL_NESTED).unwrap(), 1);
-    assert_eq!(load_object(&PRKDF, WELL_NESTED).unwrap(), 1);
+    assert_eq!(load_object(CDF, WELL_NESTED).unwrap(), 1);
+    assert_eq!(load_object(PRKDF, WELL_NESTED).unwrap(), 1);
 }
 
 #[test]
@@ -358,7 +355,7 @@ fn rejects_a_cdf_object_whose_expected_child_has_another_tag() {
         let mut tags = WELL_NESTED;
         tags[position] = NOT_EXPECTED;
         assert!(
-            matches!(load_object(&CDF, tags), Err(Error::MalformedPkcs15)),
+            matches!(load_object(CDF, tags), Err(Error::MalformedPkcs15)),
             "tag {position} not checked"
         );
     }
@@ -371,7 +368,7 @@ fn rejects_a_prkdf_object_whose_expected_child_has_another_tag() {
         let mut tags = WELL_NESTED;
         tags[position] = NOT_EXPECTED;
         assert!(
-            matches!(load_object(&PRKDF, tags), Err(Error::MalformedPkcs15)),
+            matches!(load_object(PRKDF, tags), Err(Error::MalformedPkcs15)),
             "tag {position} not checked"
         );
     }
