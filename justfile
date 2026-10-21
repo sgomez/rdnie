@@ -16,11 +16,12 @@ fmt-check:
 file-tokens *flags:
     scripts/check-file-tokens.sh {{ flags }}
 
-# With and without PC/SC, so the protocol never depends on the reader.
+# With and without PC/SC, so the protocol never depends on the reader; the emulator also without `faults`.
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets --no-default-features -- -D warnings
     cargo clippy --workspace --all-targets --features rdnie/emulator -- -D warnings
+    cargo clippy -p rdnie-emulator --all-targets -- -D warnings
 
 # Fails on rustdoc warnings, which docs.rs would show.
 doc:
@@ -29,6 +30,7 @@ doc:
 test:
     cargo test --workspace --quiet
     cargo test --workspace --quiet --features rdnie/emulator
+    cargo test -p rdnie-emulator --quiet
 
 # Builds the crate from its package, as crates.io will.
 package:
