@@ -363,4 +363,46 @@ mod tests {
             [(0x00, 0x00, 0xDE), (0x00, 0xDE, 0xDE), (0x01, 0xBC, 0x38)]
         );
     }
+
+    /// `81` length, `81` file ID and `84` DF name, with lengths that make the walk advance.
+    const BEFORE_85: [u8; 13] = [
+        0x81, 0x02, 0x02, 0x22, 0x81, 0x02, 0xAA, 0xBB, 0x84, 0x03, 0xCC, 0xDD, 0xEE,
+    ];
+
+    fn fci_with(tail: &[u8]) -> Vec<u8> {
+        let body = [&BEFORE_85[..], tail].concat();
+        [&[0x6F, u8::try_from(body.len()).unwrap()][..], &body].concat()
+    }
+
+    #[test]
+    fn reads_the_tag_85_length_after_the_81_81_and_84_tlvs() {
+        let fci = fci_with(&[
+            0x85, 0x0A, 0x00, 0x00, 0x00, 0x01, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        assert_eq!(fci_length(&fci).unwrap(), 0x0123);
+    }
+
+    #[test]
+    fn keeps_the_81_length_when_the_tag_85_is_not_10_bytes_long() {
+        let fci = fci_with(&[
+            0x85, 0x0B, 0x00, 0x00, 0x00, 0x01, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        assert_eq!(fci_length(&fci).unwrap(), 0x0222);
+    }
+
+    #[test]
+    fn keeps_the_81_length_when_a_10_follows_a_tag_other_than_85() {
+        let fci = fci_with(&[
+            0x86, 0x0A, 0x00, 0x00, 0x00, 0x01, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        assert_eq!(fci_length(&fci).unwrap(), 0x0222);
+    }
+
+    #[test]
+    fn sends_no_read_binary_at_an_offset_equal_to_the_file_length() {
+        let content = vec![7; 2 * 0xDE];
+        let mut card = PlainFile::new(content.clone());
+        assert_eq!(read(&mut card, &location()).unwrap(), content);
+        assert_eq!(card.reads, [(0x00, 0x00, 0xDE), (0x00, 0xDE, 0xDE)]);
+    }
 }
