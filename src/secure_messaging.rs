@@ -707,6 +707,74 @@ mod tests {
     }
 
     #[test]
+    fn protects_data_up_to_short_apdu() {
+        let protected = jmulticard_session().protect(&select(vec![0; 255])).unwrap();
+        assert_eq!(protected.cla, 0x0C);
+    }
+
+    #[test]
+    fn keeps_the_secure_messaging_bits_of_a_protected_cla() {
+        for cla in [0x0C, 0x04, 0x08, 0x8C] {
+            let protected = jmulticard_session()
+                .protect(&Command {
+                    cla,
+                    ..select(b"Master.File".to_vec())
+                })
+                .unwrap();
+            assert_eq!(protected.cla, cla | 0x0C, "{cla:02X}");
+        }
+    }
+
+    #[test]
+    fn keeps_response_data_that_is_not_padded_whole() {
+        for plain in [
+            hex("0102030405060701"),
+            hex("0000000000000000"),
+            hex("8001020304050607 08090A0B0C0D0E0F"),
+            hex("0102030405060780 0000000000000001"),
+        ] {
+            let mut channel = SecureMessaging::fixed();
+            let raw = channel.protected_response(&plain, StatusWord::SUCCESS);
+            let response = channel.unprotect(&Response::parse(&raw).unwrap()).unwrap();
+            assert_eq!(response.data, plain);
+        }
+    }
+
+    #[test]
+    fn strips_exactly_the_padding_of_response_data() {
+        for (plain, data) in [
+            ("0102030405060780", "01020304050607"),
+            ("aabb800000000000", "aabb"),
+            ("8000000000000000", ""),
+            ("0102030405060708 8000000000000000", "0102030405060708"),
+        ] {
+            let mut channel = SecureMessaging::fixed();
+            let raw = channel.protected_response(&hex(plain), StatusWord::SUCCESS);
+            let response = channel.unprotect(&Response::parse(&raw).unwrap()).unwrap();
+            assert_eq!(response.data, hex(data), "{plain}");
+        }
+    }
+
+    #[test]
+    fn refuses_raw_apdus_and_resets_inside_a_channel() {
+        let mut channel = SecureMessaging::fixed();
+        let mut card = ScriptedCard {
+            responses: vec![],
+            sent: vec![],
+        };
+        let mut protected = Protected {
+            channel: &mut channel,
+            card: &mut card,
+        };
+        assert!(matches!(
+            protected.transmit_raw(&[0x00, 0xA4, 0x04, 0x00]),
+            Err(Error::Transport(_))
+        ));
+        assert!(matches!(protected.reset(), Err(Error::Transport(_))));
+        assert!(card.sent.is_empty());
+    }
+
+    #[test]
     fn refuses_data_beyond_short_apdu() {
         assert!(matches!(
             jmulticard_session().protect(&select(vec![0; 256])),
