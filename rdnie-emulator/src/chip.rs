@@ -38,7 +38,9 @@ const FRAME_END: u8 = 0xBC;
 /// Public half of a terminal key set the card accepts.
 #[derive(Clone)]
 pub struct TerminalKey {
+    /// Card holder reference of the terminal certificate.
     pub chr: [u8; 8],
+    /// Big-endian RSA modulus.
     pub modulus: Vec<u8>,
     /// Whether the key opens the user channel rather than the PIN channel.
     pub user: bool,
@@ -57,7 +59,9 @@ impl TerminalKey {
 /// Randomness the driver sent in one handshake.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Handshake {
+    /// Terminal challenge of the external authentication.
     pub rnd_ifd: Vec<u8>,
+    /// Terminal key-agreement half.
     pub kifd: Vec<u8>,
     /// Whether it arrived protected by an open channel.
     pub inside_channel: bool,

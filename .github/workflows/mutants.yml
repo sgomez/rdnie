@@ -3,7 +3,7 @@ name: Mutants
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'tests/**', 'Cargo.toml', 'Cargo.lock', '.cargo/mutants.toml']
+    paths: ['src/**', 'tests/**', 'rdnie-emulator/**', '**/Cargo.toml', 'Cargo.lock', '.cargo/mutants.toml']
   schedule:
     - cron: '0 3 * * 6'
   workflow_dispatch:

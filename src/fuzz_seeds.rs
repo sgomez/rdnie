@@ -7,10 +7,11 @@ use crate::{
     Session, StatusWord,
     cwa14890::tests::{answers, recorded_internal_authentication},
     emulator::{
-        HolderCertificate, Recorder, ResponseShape, component_certificate,
-        component_root_public_key, intermediate_certificate, write_corpus,
+        HolderCertificate, ResponseShape, component_certificate, component_root_public_key,
+        intermediate_certificate,
     },
     key_sets::ComponentRoots,
+    recorder::{Recorder, write_corpus},
     secure_messaging::SecureMessaging,
     session::tests::card_with_channel,
 };

@@ -17,6 +17,9 @@ pcsc = ["dep:pcsc"]
 # Adds `Session::open_trusting`, for tests against an emulated card; never enable it in production.
 emulator = []
 
+[workspace]
+members = ["rdnie-emulator"]
+
 [[example]]
 name = "detect"
 required-features = ["pcsc"]
@@ -41,13 +44,14 @@ x509-cert = { version = "0.2", default-features = false, features = ["std"] }
 zeroize = "1"
 
 [dev-dependencies]
+rdnie-emulator = { path = "rdnie-emulator" }
 rpassword = "7"
 rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit", "sha2"] }
 # The version `rsa` 0.9 verifies with; the crate itself hashes with 0.11.
 sha2_010 = { package = "sha2", version = "0.10" }
 x509-cert = { version = "0.2", default-features = false, features = ["builder"] }
 
-# The emulator generates RSA keys at test time.
+# The emulator generates RSA keys at run time.
 [profile.dev.package.num-bigint-dig]
 opt-level = 3
 
@@ -56,10 +60,13 @@ opt-level = 3
 [profile.dev.package.pcsc]
 debug-assertions = false
 
-[lints.rust]
+[lints]
+workspace = true
+
+[workspace.lints.rust]
 unsafe_code = "forbid"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 missing_docs = "warn"
 
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

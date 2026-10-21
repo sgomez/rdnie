@@ -19,7 +19,9 @@ use x509_cert::{
     time::Validity,
 };
 
+/// Path of the certificate directory file.
 pub const CDF: [[u8; 2]; 2] = [[0x50, 0x15], [0x60, 0x04]];
+/// Path of the private key directory file.
 pub const PRKDF: [[u8; 2]; 2] = [[0x50, 0x15], [0x60, 0x01]];
 
 const MASTER_FILE: [u8; 2] = [0x3F, 0x00];
@@ -35,8 +37,11 @@ static HOLDER_KEY: LazyLock<RsaPrivateKey> =
 /// A certificate on the card, with fake DER content of the given length.
 #[derive(Clone)]
 pub struct HolderCertificate {
+    /// Certificate as DER.
     pub der: Vec<u8>,
+    /// File below the master file that stores it.
     pub file: [u8; 2],
+    /// File of its private key below `5015`, if the PrKDF lists one.
     pub key_file: Option<[u8; 2]>,
     /// Private key the card signs with, for certificates of a real key pair.
     pub key: Option<RsaPrivateKey>,
@@ -111,6 +116,7 @@ impl HolderCertificate {
         self
     }
 
+    /// Stores the certificate compressed.
     pub fn compressed(mut self) -> Self {
         self.compressed = true;
         self
@@ -122,6 +128,7 @@ impl HolderCertificate {
         self
     }
 
+    /// Leaves its key out of the PrKDF.
     pub fn without_key(mut self) -> Self {
         self.key_file = None;
         self
@@ -153,6 +160,7 @@ impl HolderCertificate {
     }
 }
 
+/// CDF listing `certificates`.
 pub fn cdf(certificates: &[HolderCertificate]) -> Vec<u8> {
     padded(certificates.iter().map(|certificate| {
         let path = certificate
@@ -173,6 +181,7 @@ pub fn cdf(certificates: &[HolderCertificate]) -> Vec<u8> {
     }))
 }
 
+/// PrKDF listing the keys of `certificates`.
 pub fn prkdf(certificates: &[HolderCertificate]) -> Vec<u8> {
     padded(certificates.iter().rev().filter_map(|certificate| {
         let path = [MASTER_FILE, CDF[0], certificate.key_file?].concat();

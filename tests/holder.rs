@@ -1,9 +1,7 @@
 //! The holder's name, surnames and number come from a DNIe certificate's subject, as `DnieCertParseUtil` gives them.
 
-mod emulator;
-
-use emulator::HolderCertificate;
 use rdnie::{Error, Holder};
+use rdnie_emulator::HolderCertificate;
 use x509_cert::{
     attr::AttributeTypeAndValue,
     der::{
