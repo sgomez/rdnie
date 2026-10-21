@@ -210,4 +210,5 @@ fn debug_output_hides_every_value() {
     for value in ["00000000T", "FIRSTSURNAME", "SECONDSURNAME", "GIVEN"] {
         assert!(!debug.contains(value), "debug output shows {value}");
     }
+    assert_eq!(debug, "Holder { .. }");
 }

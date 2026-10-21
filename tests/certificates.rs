@@ -2,7 +2,7 @@
 
 mod emulator;
 
-use emulator::{CDF, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, PRKDF, prkdf};
+use emulator::{CDF, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, PRKDF, cdf, prkdf};
 use rdnie::{Error, Session};
 
 fn assert_lists(card: EmulatedDnie, expected: &[Vec<u8>]) {
@@ -380,4 +380,32 @@ fn debug_output_hides_the_key_reference() {
     let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
     let listed = Session::open(card).unwrap().certificates().unwrap();
     assert_eq!(format!("{:?}", listed[0].key), "KeyReference { .. }");
+}
+
+fn followed_by_a_non_sequence(mut directory: Vec<u8>) -> Vec<u8> {
+    let at = directory.len() - 16;
+    directory.splice(at..at, [0x04, 0x01, 0x00]);
+    directory
+}
+
+#[test]
+fn loads_the_objects_of_a_cdf_followed_by_a_tlv_that_is_not_a_sequence() {
+    let certificates = numbered(2);
+    let card = EmulatedDnie::new(&DNIE_3_ATR)
+        .with_certificates(&certificates)
+        .with_file(&CDF, followed_by_a_non_sequence(cdf(&certificates)));
+    let listed = Session::open(card).unwrap().certificates().unwrap();
+    let listed: Vec<String> = listed.into_iter().map(|c| c.label).collect();
+    assert_eq!(listed, cert_labels(1..=2));
+}
+
+#[test]
+fn loads_the_objects_of_a_prkdf_followed_by_a_tlv_that_is_not_a_sequence() {
+    let certificates = numbered(2);
+    let card = EmulatedDnie::new(&DNIE_3_ATR)
+        .with_certificates(&certificates)
+        .with_file(&PRKDF, followed_by_a_non_sequence(prkdf(&certificates)));
+    let listed = Session::open(card).unwrap().certificates().unwrap();
+    let listed: Vec<String> = listed.into_iter().map(|c| c.label).collect();
+    assert_eq!(listed, cert_labels(1..=2));
 }
