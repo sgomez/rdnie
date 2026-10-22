@@ -102,9 +102,7 @@ impl PcscTransport {
     pub fn connect(reader: &str) -> Result<Self, Error> {
         let reader = reader_cstring(reader)?;
         let context = Context::establish(Scope::User).map_err(connecting)?;
-        let card = context
-            .connect(&reader, ShareMode::Shared, Protocols::ANY)
-            .map_err(connecting)?;
+        let card = connect_shared(&context, &reader, Protocols::ANY).map_err(connecting)?;
         Ok(Self {
             context,
             reader,
@@ -144,6 +142,28 @@ fn reader_cstring(name: &str) -> Result<CString, Error> {
     CString::new(name).map_err(|_| Error::NoReader)
 }
 
+fn connect_shared(
+    context: &Context,
+    reader: &CStr,
+    protocols: Protocols,
+) -> Result<Card, pcsc::Error> {
+    connect_falling_back(protocols, |protocols| {
+        context.connect(reader, ShareMode::Shared, protocols)
+    })
+}
+
+/// Departs from `SmartcardIoConnection`: some readers leave a powered-down card unresponsive to
+/// `ANY` but not to T=0, the only protocol a DNIe offers.
+fn connect_falling_back<C>(
+    protocols: Protocols,
+    connect: impl Fn(Protocols) -> Result<C, pcsc::Error>,
+) -> Result<C, pcsc::Error> {
+    match connect(protocols) {
+        Err(pcsc::Error::UnresponsiveCard) if protocols == Protocols::ANY => connect(Protocols::T0),
+        result => result,
+    }
+}
+
 /// What connecting to one reader found.
 enum Probe<C> {
     Card(C, Vec<u8>),
@@ -152,13 +172,11 @@ enum Probe<C> {
 }
 
 fn probe(context: &Context, reader: CString) -> Probe<(CString, Connection)> {
-    let attempt = context
-        .connect(&reader, ShareMode::Shared, Protocols::ANY)
-        .and_then(|card| {
-            let atr = pcsc_atr(&card);
-            let card = Connection(Ok(card));
-            atr.map(|atr| (card, atr))
-        });
+    let attempt = connect_shared(context, &reader, Protocols::ANY).and_then(|card| {
+        let atr = pcsc_atr(&card);
+        let card = Connection(Ok(card));
+        atr.map(|atr| (card, atr))
+    });
     match attempt {
         Ok((card, atr)) => Probe::Card((reader, card), atr),
         Err(pcsc::Error::NoSmartcard | pcsc::Error::RemovedCard) => Probe::Empty,
@@ -249,7 +267,7 @@ impl Transport for PcscTransport {
         self.card.disconnect(Disposition::ResetCard);
         let (context, reader) = (&self.context, &self.reader);
         atr(reopen(&mut self.card.0, || {
-            context.connect(reader, ShareMode::Shared, protocol)
+            connect_shared(context, reader, protocol)
         })?)
     }
 

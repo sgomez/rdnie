@@ -233,3 +233,39 @@ fn a_name_with_a_nul_byte_is_an_unknown_reader() {
 fn c(name: &str) -> CString {
     CString::new(name).expect("no NUL in a test name")
 }
+
+fn connect_answering(
+    answers: &[Result<&'static str, pcsc::Error>],
+    protocols: Protocols,
+) -> (Result<&'static str, pcsc::Error>, Vec<Protocols>) {
+    let tried = std::cell::RefCell::new(Vec::new());
+    let result = connect_falling_back(protocols, |protocols| {
+        tried.borrow_mut().push(protocols);
+        answers[tried.borrow().len() - 1]
+    });
+    (result, tried.into_inner())
+}
+
+#[test]
+fn retries_an_unresponsive_card_with_t0() {
+    let (result, tried) = connect_answering(
+        &[Err(pcsc::Error::UnresponsiveCard), Ok("A")],
+        Protocols::ANY,
+    );
+    assert_eq!(result, Ok("A"));
+    assert_eq!(tried, [Protocols::ANY, Protocols::T0]);
+}
+
+#[test]
+fn does_not_retry_other_failures() {
+    let (result, tried) = connect_answering(&[Err(pcsc::Error::NoSmartcard)], Protocols::ANY);
+    assert_eq!(result, Err(pcsc::Error::NoSmartcard));
+    assert_eq!(tried, [Protocols::ANY]);
+}
+
+#[test]
+fn does_not_retry_a_chosen_protocol() {
+    let (result, tried) = connect_answering(&[Err(pcsc::Error::UnresponsiveCard)], Protocols::T1);
+    assert_eq!(result, Err(pcsc::Error::UnresponsiveCard));
+    assert_eq!(tried, [Protocols::T1]);
+}
