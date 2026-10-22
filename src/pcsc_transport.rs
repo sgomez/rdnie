@@ -142,25 +142,34 @@ fn reader_cstring(name: &str) -> Result<CString, Error> {
     CString::new(name).map_err(|_| Error::NoReader)
 }
 
+/// Departs from `SmartcardIoConnection`: asks for the protocols the cached ATR offers instead of
+/// `ANY`, which macOS's own CCID driver serves with T=1 only, failing on a T=0-only DNIe.
 fn connect_shared(
     context: &Context,
     reader: &CStr,
     protocols: Protocols,
 ) -> Result<Card, pcsc::Error> {
-    connect_falling_back(protocols, |protocols| {
-        context.connect(reader, ShareMode::Shared, protocols)
-    })
+    let protocols = match (protocols, cached_atr(context, reader)) {
+        (Protocols::ANY, Some(atr)) => offered_protocols(&atr),
+        (protocols, _) => protocols,
+    };
+    context.connect(reader, ShareMode::Shared, protocols)
 }
 
-/// Departs from `SmartcardIoConnection`: some readers leave a powered-down card unresponsive to
-/// `ANY` but not to T=0, the only protocol a DNIe offers.
-fn connect_falling_back<C>(
-    protocols: Protocols,
-    connect: impl Fn(Protocols) -> Result<C, pcsc::Error>,
-) -> Result<C, pcsc::Error> {
-    match connect(protocols) {
-        Err(pcsc::Error::UnresponsiveCard) if protocols == Protocols::ANY => connect(Protocols::T0),
-        result => result,
+/// The ATR PC/SC keeps for the reader, readable while the card is powered down.
+fn cached_atr(context: &Context, reader: &CStr) -> Option<Vec<u8>> {
+    let mut states = [ReaderState::new(reader, State::UNAWARE)];
+    context
+        .get_status_change(Duration::ZERO, &mut states)
+        .ok()?;
+    Some(states[0].atr().to_vec())
+}
+
+/// T=0 when the ATR has no TD1, as ISO 7816-3 reads it; otherwise PC/SC chooses.
+fn offered_protocols(atr: &[u8]) -> Protocols {
+    match atr.get(1) {
+        Some(format) if format & 0x80 == 0 => Protocols::T0,
+        _ => Protocols::ANY,
     }
 }
 
