@@ -233,3 +233,19 @@ fn a_name_with_a_nul_byte_is_an_unknown_reader() {
 fn c(name: &str) -> CString {
     CString::new(name).expect("no NUL in a test name")
 }
+
+#[test]
+fn a_card_without_td1_offers_only_t0() {
+    assert_eq!(offered_protocols(&DNIE_3), Protocols::T0);
+}
+
+#[test]
+fn a_card_with_td1_lets_pcsc_choose() {
+    assert_eq!(offered_protocols(&[0x3B, 0x80, 0x01, 0x01]), Protocols::ANY);
+}
+
+#[test]
+fn an_atr_too_short_to_read_lets_pcsc_choose() {
+    assert_eq!(offered_protocols(&[0x3B]), Protocols::ANY);
+    assert_eq!(offered_protocols(&[]), Protocols::ANY);
+}

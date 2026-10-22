@@ -102,9 +102,7 @@ impl PcscTransport {
     pub fn connect(reader: &str) -> Result<Self, Error> {
         let reader = reader_cstring(reader)?;
         let context = Context::establish(Scope::User).map_err(connecting)?;
-        let card = context
-            .connect(&reader, ShareMode::Shared, Protocols::ANY)
-            .map_err(connecting)?;
+        let card = connect_shared(&context, &reader, Protocols::ANY).map_err(connecting)?;
         Ok(Self {
             context,
             reader,
@@ -144,6 +142,37 @@ fn reader_cstring(name: &str) -> Result<CString, Error> {
     CString::new(name).map_err(|_| Error::NoReader)
 }
 
+/// Departs from `SmartcardIoConnection`: asks for the protocols the cached ATR offers instead of
+/// `ANY`, which macOS's own CCID driver serves with T=1 only, failing on a T=0-only DNIe.
+fn connect_shared(
+    context: &Context,
+    reader: &CStr,
+    protocols: Protocols,
+) -> Result<Card, pcsc::Error> {
+    let protocols = match (protocols, cached_atr(context, reader)) {
+        (Protocols::ANY, Some(atr)) => offered_protocols(&atr),
+        (protocols, _) => protocols,
+    };
+    context.connect(reader, ShareMode::Shared, protocols)
+}
+
+/// The ATR PC/SC keeps for the reader, readable while the card is powered down.
+fn cached_atr(context: &Context, reader: &CStr) -> Option<Vec<u8>> {
+    let mut states = [ReaderState::new(reader, State::UNAWARE)];
+    context
+        .get_status_change(Duration::ZERO, &mut states)
+        .ok()?;
+    Some(states[0].atr().to_vec())
+}
+
+/// T=0 when the ATR has no TD1, as ISO 7816-3 reads it; otherwise PC/SC chooses.
+fn offered_protocols(atr: &[u8]) -> Protocols {
+    match atr.get(1) {
+        Some(format) if format & 0x80 == 0 => Protocols::T0,
+        _ => Protocols::ANY,
+    }
+}
+
 /// What connecting to one reader found.
 enum Probe<C> {
     Card(C, Vec<u8>),
@@ -152,13 +181,11 @@ enum Probe<C> {
 }
 
 fn probe(context: &Context, reader: CString) -> Probe<(CString, Connection)> {
-    let attempt = context
-        .connect(&reader, ShareMode::Shared, Protocols::ANY)
-        .and_then(|card| {
-            let atr = pcsc_atr(&card);
-            let card = Connection(Ok(card));
-            atr.map(|atr| (card, atr))
-        });
+    let attempt = connect_shared(context, &reader, Protocols::ANY).and_then(|card| {
+        let atr = pcsc_atr(&card);
+        let card = Connection(Ok(card));
+        atr.map(|atr| (card, atr))
+    });
     match attempt {
         Ok((card, atr)) => Probe::Card((reader, card), atr),
         Err(pcsc::Error::NoSmartcard | pcsc::Error::RemovedCard) => Probe::Empty,
@@ -249,7 +276,7 @@ impl Transport for PcscTransport {
         self.card.disconnect(Disposition::ResetCard);
         let (context, reader) = (&self.context, &self.reader);
         atr(reopen(&mut self.card.0, || {
-            context.connect(reader, ShareMode::Shared, protocol)
+            connect_shared(context, reader, protocol)
         })?)
     }
 
