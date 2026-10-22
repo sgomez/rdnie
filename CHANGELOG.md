@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/sgomez/rdnie/compare/rdnie-v0.1.1...rdnie-v0.1.2) - 2026-10-22
+
+### Fixed
+
+- *(pcsc)* ask for the protocols the cached ATR offers
+- *(pcsc)* retry an unresponsive card with T=0
+
 ## [0.1.1](https://github.com/sgomez/rdnie/compare/rdnie-v0.1.0...rdnie-v0.1.1) - 2026-10-21
 
 ### Added
