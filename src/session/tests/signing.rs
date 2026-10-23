@@ -21,7 +21,7 @@ fn signs_digests_that_verify_with_the_certificate() {
         ),
     ];
     let mut session = open(signing_card());
-    let certificate = session.certificates().unwrap().remove(0).der;
+    let certificate = session.certificate("Cert1").unwrap().unwrap();
     for (algorithm, scheme, digest) in cases {
         let signature = sign_with(&mut session, &digest, algorithm).unwrap();
         verify(&certificate, scheme, &digest, &signature);
@@ -72,4 +72,11 @@ fn opens_the_user_channel_inside_the_pin_channel() {
             .iter()
             .all(|handshake| !handshake.inside_channel)
     );
+}
+
+#[test]
+fn signing_with_a_listed_key_reads_no_certificate_file() {
+    let mut session = open(signing_card());
+    sign_with(&mut session, &[0; 32], HashAlgorithm::Sha256).unwrap();
+    assert_eq!(certificate_files_selected(&session.transport), []);
 }

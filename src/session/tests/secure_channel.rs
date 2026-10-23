@@ -21,7 +21,7 @@ fn reports_a_secure_channel_error_on_a_bad_response_mac() {
 fn reads_retries_and_signs_over(shape: ResponseShape) {
     let mut session = open(signing_card().with_pin_retries(2).shaping_responses(shape));
     assert_eq!(session.pin_retries().unwrap(), 2);
-    let certificate = session.certificates().unwrap().remove(0).der;
+    let certificate = session.certificate("Cert1").unwrap().unwrap();
     let digest = Sha256::digest(b"document");
     let signature = sign_with(&mut session, &digest, HashAlgorithm::Sha256).unwrap();
     verify(

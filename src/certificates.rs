@@ -43,7 +43,7 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-//! The holder's certificates and the keys they pair with, loaded as `Dnie.loadCertificates` does.
+//! The holder's certificates and the keys they pair with, read from the files `Dnie.loadCertificates` reads.
 
 use std::fmt;
 
@@ -72,8 +72,6 @@ pub const SIGNATURE_LABEL: &str = "CertFirmaDigital";
 /// Certificate of the holder, paired with its private key on the card.
 #[non_exhaustive]
 pub struct Certificate {
-    /// X.509 certificate in DER.
-    pub der: Vec<u8>,
     /// PKCS#15 label, exactly as the CDF stores it.
     pub label: String,
     /// Private key that matches the certificate.
@@ -100,49 +98,42 @@ impl fmt::Debug for KeyReference {
     }
 }
 
-/// A CDF certificate, with the key the PrKDF pairs it with, if any.
-pub(crate) struct Loaded {
-    pub(crate) der: Vec<u8>,
-    pub(crate) label: String,
-    pub(crate) key: Option<KeyReference>,
+/// The CDF's certificates, each with its label and file path.
+pub(crate) fn cdf(card: &mut dyn Transport) -> Result<Vec<pkcs15::Entry>, Error> {
+    pkcs15::entries(&files::read(card, &location(CDF)?)?, true)
 }
 
-impl Loaded {
-    pub(crate) fn keyed(&self) -> Option<Certificate> {
-        Some(Certificate {
-            der: self.der.clone(),
-            label: self.label.clone(),
-            key: self.key.clone()?,
-        })
-    }
+/// The PrKDF's keys, each with its file path.
+pub(crate) fn prkdf(card: &mut dyn Transport) -> Result<Vec<pkcs15::Entry>, Error> {
+    pkcs15::entries(&files::read(card, &location(PRKDF)?)?, false)
 }
 
-/// Reads the CDF, each certificate it lists and the PrKDF, and keeps every certificate.
-pub(crate) fn load(card: &mut dyn Transport) -> Result<Vec<Loaded>, Error> {
-    let listed = pkcs15::entries(&files::read(card, &location(CDF)?)?, true)?;
-    let mut ders = Vec::with_capacity(listed.len());
-    for entry in &listed {
-        ders.push(stored_x509(files::read(card, &location(&entry.path)?)?)?);
-    }
-    let keys = pkcs15::entries(&files::read(card, &location(PRKDF)?)?, false)?;
-    let mut certificates = Vec::with_capacity(ders.len());
-    for (entry, der) in listed.into_iter().zip(ders) {
-        let key = match keys.iter().find(|key| key.id == entry.id) {
-            Some(key) => {
-                let file = location(&key.path)?
-                    .last_file()
-                    .ok_or(Error::MalformedPkcs15)?;
-                Some(KeyReference { id: entry.id, file })
-            }
-            None => None,
-        };
-        certificates.push(Loaded {
-            der,
-            label: entry.label,
-            key,
-        });
+/// The CDF certificates the PrKDF has a key for, each paired with it by identifier.
+pub(crate) fn keyed(
+    cdf: &[pkcs15::Entry],
+    prkdf: &[pkcs15::Entry],
+) -> Result<Vec<Certificate>, Error> {
+    let mut certificates = Vec::with_capacity(cdf.len());
+    for entry in cdf {
+        if let Some(key) = prkdf.iter().find(|key| key.id == entry.id) {
+            let file = location(&key.path)?
+                .last_file()
+                .ok_or(Error::MalformedPkcs15)?;
+            certificates.push(Certificate {
+                label: entry.label.clone(),
+                key: KeyReference {
+                    id: entry.id.clone(),
+                    file,
+                },
+            });
+        }
     }
     Ok(certificates)
+}
+
+/// The X.509 certificate stored in the file of `entry`.
+pub(crate) fn read(card: &mut dyn Transport, entry: &pkcs15::Entry) -> Result<Vec<u8>, Error> {
+    stored_x509(files::read(card, &location(&entry.path)?)?)
 }
 
 fn location(path: &[u8]) -> Result<Location, Error> {
