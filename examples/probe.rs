@@ -1,7 +1,8 @@
 //! Manual probe for the card's holder: prints ATR, status words, labels, counts and pass/fail only;
 //! `--verbose` also prints the holder's data, which must never leave the machine.
 //! `--list` prints the reader names and stops; `--reader <name>` connects to that reader.
-//! Every card step prints its elapsed time; a failing one prints its status word.
+//! Every card step prints its elapsed time; a failing one prints its status word, and a failed
+//! IDESP read prints the one it got.
 //!
 //! Checking that opening a session does not reset the card:
 //!
@@ -49,7 +50,11 @@ fn run() -> Result<(), Error> {
     let atr = transport.atr()?;
     println!("{}", describe_atr(&atr));
 
-    let mut session = timed("open", || Session::open(transport))?;
+    let mut session = timed("open", || Session::open(transport)).inspect_err(|error| {
+        if let Error::Status(status) = error {
+            println!("IDESP read: fail ({status})");
+        }
+    })?;
     println!("card: DNIe 3.0/4.0");
     if arguments
         .iter()

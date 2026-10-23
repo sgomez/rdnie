@@ -43,7 +43,7 @@
 
 use zeroize::Zeroize;
 
-use crate::{Command, Error, Response};
+use crate::{Command, Error, Response, StatusWord};
 
 /// Channel the APDUs travel through: PC/SC in production, an emulator in tests.
 ///
@@ -88,9 +88,11 @@ pub trait Transport {
     where
         Self: Sized;
 
-    /// Sends a command, completing `61xx` with `GET RESPONSE` and resending a plain command on `6Cxx`.
+    /// Sends a command, completing `61xx` with `GET RESPONSE` and resending a plain command on `6Cxx`
+    /// and once on `69 87`, which a DNIe answers after a leftover secure channel.
     ///
-    /// A command gets at most 256 `GET RESPONSE` and at most 2 consecutive `6Cxx` resends.
+    /// A command gets at most 256 `GET RESPONSE`, at most 2 consecutive `6Cxx` resends and one
+    /// `69 87` resend.
     ///
     /// # Errors
     ///
@@ -115,9 +117,17 @@ fn follow<T: Transport + ?Sized>(
     let mut data = Vec::new();
     let mut get_responses = 0;
     let mut resends = 0;
+    let mut channel_dropped = false;
     loop {
         let sent = resent.as_ref().unwrap_or(command);
         let response = Response::parse(&transport.transmit_raw(&sent.to_bytes()?)?)?;
+        if response.status == SM_DATA_MISSING && sent.cla == PLAIN_CLA {
+            if channel_dropped {
+                return Err(Error::Status(response.status));
+            }
+            channel_dropped = true;
+            continue;
+        }
         let [sw1, sw2] = response.status.0.to_be_bytes();
         if sw1 == WRONG_LENGTH && sent.cla == PLAIN_CLA {
             if resends == MAX_RESENDS {
@@ -152,6 +162,8 @@ fn follow<T: Transport + ?Sized>(
 }
 
 const RESPONSE_PENDING: u8 = 0x61;
+// A DNIe answers it to the first plain command after a leftover secure channel, and drops it.
+const SM_DATA_MISSING: StatusWord = StatusWord(0x6987);
 const MAX_GET_RESPONSES: usize = 256;
 pub(crate) const MAX_RESENDS: usize = 2;
 pub(crate) const WRONG_LENGTH: u8 = 0x6C;

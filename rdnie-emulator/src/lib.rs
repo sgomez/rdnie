@@ -121,7 +121,8 @@ pub struct EmulatedDnie {
 /// A step of a session, named by what the consumer does rather than by APDU.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// `Session::open`. Opening sends no reset, so a reset here is one another application caused.
+    /// `Session::open`, striking at its IDESP read. Opening sends no reset, so a reset here is one
+    /// another application caused.
     Opening,
     /// The first read of the holder's certificates.
     Certificates,

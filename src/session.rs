@@ -48,7 +48,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Certificate, Error, HashAlgorithm, KeyReference, Pin, Transport,
+    Certificate, Error, HashAlgorithm, KeyReference, Pin, StatusWord, Transport,
     atr::check_dnie_3,
     certificates,
     files::{self, Location},
@@ -57,6 +57,7 @@ use crate::{
 };
 
 const IDESP: &[u8] = &[0x3F, 0x00, 0x00, 0x06];
+const FILE_NOT_FOUND: StatusWord = StatusWord(0x6A82);
 
 /// Session with a DNIe 3.0/4.0 over any [`Transport`].
 ///
@@ -76,13 +77,14 @@ pub struct Session<T: Transport> {
 }
 
 impl<T: Transport> Session<T> {
-    /// Accepts the card only if its current ATR is a DNIe 3.0/4.0 and reads its IDESP if it can,
-    /// without resetting it.
+    /// Accepts the card only if its current ATR is a DNIe 3.0/4.0 and reads its IDESP, without
+    /// resetting it. A card without an IDESP, or with an empty one, takes the second generation.
     ///
     /// # Errors
     ///
     /// Those of [`Transport::transaction`], [`Transport::atr`], [`Error::NotDnie`],
-    /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`].
+    /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`], and any failure reading the IDESP but its
+    /// absence.
     pub fn open(transport: T) -> Result<Self, Error> {
         Self::open_with(transport, ComponentRoots::embedded())
     }
@@ -105,7 +107,7 @@ impl<T: Transport> Session<T> {
 
     fn open_with(mut transport: T, roots: ComponentRoots) -> Result<Self, Error> {
         check_dnie_3(&transport.atr()?)?;
-        let idesp = transport.transaction(|card| Ok(read_idesp(card)))?;
+        let idesp = transport.transaction(read_idesp)?;
         Ok(Self {
             transport,
             idesp,
@@ -240,11 +242,17 @@ fn cached<'a, R>(
     Ok(slot.insert(value))
 }
 
-/// The IDESP in clear, or `None` if the card does not give it, as `Dnie3` leaves it.
-fn read_idesp(card: &mut dyn Transport) -> Option<String> {
-    let location = Location::new(IDESP)?;
-    let idesp = files::read(card, &location).ok()?;
-    (!idesp.is_empty()).then(|| String::from_utf8_lossy(&idesp).into_owned())
+/// The IDESP in clear, or `None` if the card has no IDESP file or it is empty.
+fn read_idesp(card: &mut dyn Transport) -> Result<Option<String>, Error> {
+    let Some(location) = Location::new(IDESP) else {
+        return Ok(None);
+    };
+    let idesp = match files::read(card, &location) {
+        Ok(idesp) => idesp,
+        Err(Error::Status(FILE_NOT_FOUND)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok((!idesp.is_empty()).then(|| String::from_utf8_lossy(&idesp).into_owned()))
 }
 
 #[cfg(test)]

@@ -60,11 +60,46 @@ fn opens_twice_on_the_same_card() {
 
 #[test]
 fn opens_after_an_operation_left_a_channel_open() {
-    let mut first = open(card_with_channel());
+    let card = card_accepting(&[&R1_PIN]).with_idesp(b"BMP100000");
+    let mut first = open(card);
     first.pin_retries().unwrap();
     let mut session = open(first.into_transport());
+    assert_eq!(session.key_generation(), KeyGeneration::First);
     assert_eq!(session.pin_retries().unwrap(), 3);
     assert_eq!(session.transport.resets(), 0);
+}
+
+#[test]
+fn reads_after_a_channel_left_open_between_operations() {
+    let mut session = open(signing_card());
+    session.pin_retries().unwrap();
+    assert_eq!(session.certificates().unwrap().len(), 1);
+}
+
+#[test]
+fn takes_second_generation_keys_with_an_empty_idesp() {
+    assert!(retries(card_accepting(&[&R2_PIN]).with_idesp(b"")).is_ok());
+}
+
+#[test]
+fn fails_to_open_on_a_reset_during_the_idesp_read() {
+    let card = card_with_channel().resetting_card_at(Step::Opening);
+    let roots = ComponentRoots::only(component_root_public_key());
+    assert!(matches!(
+        Session::open_with_roots(card, roots),
+        Err(Error::CardReset)
+    ));
+}
+
+#[test]
+fn fails_to_open_on_any_idesp_failure_but_an_absent_file() {
+    let card = EmulatedDnie::new(&DNIE_3_ATR)
+        .with_idesp(b"BMP100000")
+        .delivering(Delivery::EndlessPending);
+    assert!(matches!(
+        Session::open(card),
+        Err(Error::Status(StatusWord(0x6105)))
+    ));
 }
 
 /// Answers `atr()` with its own ATR, whatever the card resets to.
