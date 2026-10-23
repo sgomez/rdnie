@@ -42,8 +42,8 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-//! Session with a DNIe 3.0/4.0, opened as `DnieFactory.getDnie` and `Dnie3` do: reset, classify
-//! the ATR, read the IDESP.
+//! Session with a DNIe 3.0/4.0, opened as `DnieFactory.getDnie` and `Dnie3` do, minus the reset:
+//! classify the ATR, read the IDESP.
 
 use crate::{
     Certificate, Error, HashAlgorithm, KeyReference, Pin, Transport,
@@ -72,11 +72,12 @@ pub struct Session<T: Transport> {
 }
 
 impl<T: Transport> Session<T> {
-    /// Resets the card, accepts it only if it is a DNIe 3.0/4.0 and reads its IDESP if it can.
+    /// Accepts the card only if its current ATR is a DNIe 3.0/4.0 and reads its IDESP if it can,
+    /// without resetting it.
     ///
     /// # Errors
     ///
-    /// Those of [`Transport::transaction`], [`Transport::reset`], [`Error::NotDnie`],
+    /// Those of [`Transport::transaction`], [`Transport::atr`], [`Error::NotDnie`],
     /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`].
     pub fn open(transport: T) -> Result<Self, Error> {
         Self::open_with(transport, ComponentRoots::embedded())
@@ -99,7 +100,7 @@ impl<T: Transport> Session<T> {
     }
 
     fn open_with(mut transport: T, roots: ComponentRoots) -> Result<Self, Error> {
-        check_dnie_3(&transport.reset()?)?;
+        check_dnie_3(&transport.atr()?)?;
         let idesp = transport.transaction(|card| Ok(read_idesp(card)))?;
         Ok(Self {
             transport,

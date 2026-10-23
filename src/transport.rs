@@ -57,7 +57,15 @@ pub trait Transport {
     /// card was reset since the last command and [`Error::CardRemoved`] if it left the reader.
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error>;
 
-    /// Resets the card and returns its ATR.
+    /// The card's current ATR, read without touching the card.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Transport`] if it cannot be read, [`Error::CardReset`] if the card was reset since
+    /// the last command and [`Error::CardRemoved`] if it left the reader.
+    fn atr(&self) -> Result<Vec<u8>, Error>;
+
+    /// Resets the card and returns its ATR. rdnie never calls it; it is there for callers.
     ///
     /// # Errors
     ///

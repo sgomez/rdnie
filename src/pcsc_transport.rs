@@ -115,16 +115,6 @@ impl PcscTransport {
     pub fn reader(&self) -> String {
         self.reader.to_string_lossy().into_owned()
     }
-
-    /// The card's current ATR.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::CardRemoved`] if the card left the reader, [`Error::CardReset`] if it was reset,
-    /// and [`Error::Transport`] if PC/SC fails otherwise.
-    pub fn atr(&self) -> Result<Vec<u8>, Error> {
-        atr(self.card.card()?)
-    }
 }
 
 fn reader_names(readers: Result<Vec<CString>, pcsc::Error>) -> Result<Vec<String>, Error> {
@@ -269,6 +259,10 @@ impl Transport for PcscTransport {
         recovering(result, || reconnect(&mut self.card))
     }
 
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        atr(self.card.card()?)
+    }
+
     /// Disconnects with `ResetCard` and reconnects to the same reader with the negotiated
     /// protocol, as `SmartcardIoConnection.reset` does; also reconnects after a failed reset.
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
@@ -361,6 +355,10 @@ struct InTransaction<'card>(Transaction<'card>);
 impl Transport for InTransaction<'_> {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         transmit(&self.0, apdu)
+    }
+
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        atr(&self.0)
     }
 
     fn reset(&mut self) -> Result<Vec<u8>, Error> {

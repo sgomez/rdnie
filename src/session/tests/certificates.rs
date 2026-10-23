@@ -10,6 +10,10 @@ impl crate::Transport for Unplugged {
         self.0.transmit_raw(apdu)
     }
 
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        self.0.atr()
+    }
+
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         self.0.reset()
     }

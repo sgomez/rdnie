@@ -149,6 +149,11 @@ impl EmulatedDnie {
         self.commands
     }
 
+    /// Times the card was asked to reset through [`Transport::reset`].
+    pub fn resets(&self) -> usize {
+        self.resets
+    }
+
     /// Fails `fault` of the handshake.
     pub fn failing(mut self, fault: HandshakeFault) -> Self {
         self.handshake_fault = Some(fault);

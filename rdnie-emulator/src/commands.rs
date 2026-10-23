@@ -274,6 +274,21 @@ impl EmulatedDnie {
     }
 }
 
+impl EmulatedDnie {
+    /// Drops what a reset clears, whoever caused it.
+    pub(crate) fn power_cycle(&mut self) {
+        self.pending.clear();
+        self.current.clear();
+        self.channel = None;
+        self.user_channel = false;
+        self.pin_verified = false;
+        self.signing_key = None;
+        if let Some(chip) = &mut self.chip {
+            chip.reset();
+        }
+    }
+}
+
 impl Transport for EmulatedDnie {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         if self.presence == Presence::Removed {
@@ -287,7 +302,7 @@ impl Transport for EmulatedDnie {
             }
             return match self.fault.take() {
                 Some(Fault::Reset) => {
-                    self.reset()?;
+                    self.power_cycle();
                     Err(Error::CardReset)
                 }
                 Some(Fault::ChannelLost) => {
@@ -308,7 +323,7 @@ impl Transport for EmulatedDnie {
         };
         if apdu.ins == EXTERNAL_AUTHENTICATE {
             if self.faulty(HandshakeFault::ResettingOnExternalAuthenticate) {
-                self.reset()?;
+                self.power_cycle();
                 return Err(Error::CardReset);
             }
             if self.faulty(HandshakeFault::FailingOnExternalAuthenticate) {
@@ -325,22 +340,19 @@ impl Transport for EmulatedDnie {
         Ok(self.answer(&apdu))
     }
 
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        if self.presence == Presence::Removed {
+            return Err(Error::CardRemoved);
+        }
+        Ok(self.atr.clone())
+    }
+
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
         }
-        if self.scheduled.contains(&(Step::Opening, Strike::Removal)) {
-            self.strike(Step::Opening)?;
-        }
-        self.pending.clear();
-        self.current.clear();
-        self.channel = None;
-        self.user_channel = false;
-        self.pin_verified = false;
-        self.signing_key = None;
-        if let Some(chip) = &mut self.chip {
-            chip.reset();
-        }
+        self.resets += 1;
+        self.power_cycle();
         Ok(self.atr.clone())
     }
 

@@ -104,6 +104,7 @@ pub struct EmulatedDnie {
     signing_key: Option<[u8; 2]>,
     transactions: usize,
     commands: usize,
+    resets: usize,
     pin_queries: Vec<PinQuery>,
     retry_lost_between_transactions: bool,
     fault: Option<Fault>,
@@ -119,7 +120,7 @@ pub struct EmulatedDnie {
 /// A step of a session, named by what the consumer does rather than by APDU.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// `Session::open`.
+    /// `Session::open`. Opening sends no reset, so a reset here is one another application caused.
     Opening,
     /// The first read of the holder's certificates.
     Certificates,
@@ -216,6 +217,7 @@ impl EmulatedDnie {
             signing_key: None,
             transactions: 0,
             commands: 0,
+            resets: 0,
             pin_queries: Vec::new(),
             retry_lost_between_transactions: false,
             fault: None,
@@ -336,7 +338,7 @@ impl EmulatedDnie {
                 Err(Error::CardRemoved)
             }
             Strike::Reset => {
-                self.reset()?;
+                self.power_cycle();
                 Err(Error::CardReset)
             }
         }

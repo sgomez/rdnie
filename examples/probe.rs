@@ -4,7 +4,7 @@
 
 use rdnie::{
     Certificate, Error, HashAlgorithm, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration, PcscTransport,
-    Pin, Session, describe_atr,
+    Pin, Session, Transport, describe_atr,
 };
 use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
 use sha2_010::{Digest, Sha256};
