@@ -154,6 +154,11 @@ impl EmulatedDnie {
         self.resets
     }
 
+    /// Every path the card selected by file ID, from the master file down, in order.
+    pub fn selected(&self) -> &[Vec<[u8; 2]>] {
+        &self.selected
+    }
+
     /// Fails `fault` of the handshake.
     pub fn failing(mut self, fault: HandshakeFault) -> Self {
         self.handshake_fault = Some(fault);

@@ -45,6 +45,17 @@ pub(crate) fn open(card: EmulatedDnie) -> Session<EmulatedDnie> {
     Session::open_with_roots(card, ComponentRoots::only(component_root_public_key())).unwrap()
 }
 
+/// The ids of the holder certificate files the card selected, in order.
+fn certificate_files_selected(card: &EmulatedDnie) -> Vec<u8> {
+    card.selected()
+        .iter()
+        .filter_map(|path| match path.as_slice() {
+            [[0x70, id]] => Some(*id),
+            _ => None,
+        })
+        .collect()
+}
+
 fn retries(card: EmulatedDnie) -> Result<u8, Error> {
     open(card).pin_retries()
 }

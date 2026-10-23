@@ -48,14 +48,20 @@ fn run() -> Result<(), Error> {
     };
     println!("key set: {key_set}");
 
-    let certificates = session.certificates()?;
-    println!("certificates: {}", certificates.len());
-    for certificate in &certificates {
+    let listed = session.certificates()?;
+    println!("certificates: {}", listed.len());
+    let mut certificates = Vec::with_capacity(listed.len());
+    for certificate in listed {
         println!("label: {}", certificate.label);
+        let Some(der) = session.certificate(&certificate.label)? else {
+            println!("  certificate: fail (not found)");
+            continue;
+        };
         holder(
-            &certificate.der,
+            &der,
             std::env::args().any(|argument| argument == "--verbose"),
         );
+        certificates.push((certificate, der));
     }
     let intermediate = session.certificate(INTERMEDIATE_CA_LABEL)?;
     println!(
@@ -90,8 +96,11 @@ fn run() -> Result<(), Error> {
 }
 
 /// Signs a fixed digest with the signature key and checks the result against its certificate.
-fn sign(session: &mut Session<PcscTransport>, certificates: &[Certificate]) -> Result<(), Error> {
-    let Some(certificate) = certificates.iter().find(|c| is_signature(&c.der)) else {
+fn sign(
+    session: &mut Session<PcscTransport>,
+    certificates: &[(Certificate, Vec<u8>)],
+) -> Result<(), Error> {
+    let Some((certificate, der)) = certificates.iter().find(|(_, der)| is_signature(der)) else {
         println!("signature certificate: not found");
         return Ok(());
     };
@@ -114,7 +123,7 @@ fn sign(session: &mut Session<PcscTransport>, certificates: &[Certificate]) -> R
         }
     };
     println!("sign: pass");
-    let verified = verifies(&certificate.der, &digest, &signature);
+    let verified = verifies(der, &digest, &signature);
     println!(
         "local verification: {}",
         if verified { "pass" } else { "fail" }

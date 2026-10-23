@@ -45,13 +45,15 @@
 //! Session with a DNIe 3.0/4.0, opened as `DnieFactory.getDnie` and `Dnie3` do, minus the reset:
 //! classify the ATR, read the IDESP.
 
+use std::collections::BTreeMap;
+
 use crate::{
     Certificate, Error, HashAlgorithm, KeyReference, Pin, Transport,
     atr::check_dnie_3,
     certificates,
     files::{self, Location},
     key_sets::{ComponentRoots, KeyGeneration},
-    pin, signature,
+    pin, pkcs15, signature,
 };
 
 const IDESP: &[u8] = &[0x3F, 0x00, 0x00, 0x06];
@@ -67,8 +69,10 @@ pub struct Session<T: Transport> {
     roots: ComponentRoots,
     /// The count [`Session::pin_retries`] last showed, which the next sign expects.
     shown_retries: Option<u8>,
-    /// Every CDF certificate, loaded on the first request and kept for the session.
-    loaded: Option<Vec<certificates::Loaded>>,
+    /// The CDF, the PrKDF and the DER of each label, each read on first request and then kept.
+    cdf: Option<Vec<pkcs15::Entry>>,
+    prkdf: Option<Vec<pkcs15::Entry>>,
+    ders: BTreeMap<String, Vec<u8>>,
 }
 
 impl<T: Transport> Session<T> {
@@ -107,48 +111,47 @@ impl<T: Transport> Session<T> {
             idesp,
             roots,
             shown_retries: None,
-            loaded: None,
+            cdf: None,
+            prkdf: None,
+            ders: BTreeMap::new(),
         })
     }
 
-    /// Lists the holder's certificates that have a private key, each with its PKCS#15 label,
-    /// without a PIN. The first call loads every CDF certificate from the card and the session
-    /// keeps them, so later calls send nothing; a failed load keeps nothing.
+    /// Lists the holder's certificates that have a private key, each with its PKCS#15 label and
+    /// key, without a PIN and without reading any certificate file. The session keeps the CDF
+    /// and the PrKDF from their first read; a failed read keeps nothing of that file.
     ///
     /// # Errors
     ///
-    /// Those of [`Session::open`], [`Error::Status`] if a file cannot be read and
-    /// [`Error::MalformedPkcs15`] if a directory cannot be decoded, a certificate has no file in
-    /// its path, no UTF-8 label, or its bytes are not an X.509 certificate.
+    /// Those of [`Session::open`], [`Error::Status`] if a directory cannot be read and
+    /// [`Error::MalformedPkcs15`] if it cannot be decoded, a certificate has no UTF-8 label or its
+    /// key has no file in its path.
     pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
-        Ok(self
-            .loaded()?
-            .iter()
-            .filter_map(certificates::Loaded::keyed)
-            .collect())
+        let cdf = cached(&mut self.cdf, &mut self.transport, certificates::cdf)?;
+        let prkdf = cached(&mut self.prkdf, &mut self.transport, certificates::prkdf)?;
+        certificates::keyed(cdf, prkdf)
     }
 
     /// Fetches the DER of the CDF certificate labelled `label`, with or without a private key,
-    /// from the certificates [`Session::certificates`] shares. `None` if no certificate has that
-    /// label; with duplicates the last one in the CDF wins.
+    /// reading only its file, once per session. `None` if no certificate has that label; with
+    /// duplicates the last one in the CDF wins.
     ///
     /// # Errors
     ///
-    /// Those of [`Session::certificates`].
+    /// Those of [`Session::open`], [`Error::Status`] if the CDF or the certificate file cannot be
+    /// read and [`Error::MalformedPkcs15`] if the CDF cannot be decoded, the certificate has no
+    /// file in its path or its bytes are not an X.509 certificate.
     pub fn certificate(&mut self, label: &str) -> Result<Option<Vec<u8>>, Error> {
-        Ok(self
-            .loaded()?
-            .iter()
-            .rev()
-            .find(|loaded| loaded.label == label)
-            .map(|loaded| loaded.der.clone()))
-    }
-
-    fn loaded(&mut self) -> Result<&[certificates::Loaded], Error> {
-        if self.loaded.is_none() {
-            self.loaded = Some(operation(&mut self.transport, certificates::load)?);
+        if let Some(der) = self.ders.get(label) {
+            return Ok(Some(der.clone()));
         }
-        Ok(self.loaded.as_deref().unwrap_or_default())
+        let cdf = cached(&mut self.cdf, &mut self.transport, certificates::cdf)?;
+        let Some(entry) = cdf.iter().rev().find(|entry| entry.label == label) else {
+            return Ok(None);
+        };
+        let der = operation(&mut self.transport, |card| certificates::read(card, entry))?;
+        self.ders.insert(label.to_owned(), der.clone());
+        Ok(Some(der))
     }
 
     /// Reads how many PIN attempts are left through the PIN channel, without sending a PIN.
@@ -222,6 +225,19 @@ fn operation<R>(
     body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
 ) -> Result<R, Error> {
     transport.transaction(body)
+}
+
+/// The value in `slot`, read in its own operation if the slot is empty.
+fn cached<'a, R>(
+    slot: &'a mut Option<R>,
+    transport: &mut impl Transport,
+    read: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+) -> Result<&'a R, Error> {
+    let value = match slot.take() {
+        Some(value) => value,
+        None => operation(transport, read)?,
+    };
+    Ok(slot.insert(value))
 }
 
 /// The IDESP in clear, or `None` if the card does not give it, as `Dnie3` leaves it.

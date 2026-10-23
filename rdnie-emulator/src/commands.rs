@@ -209,6 +209,7 @@ impl EmulatedDnie {
                 let answer = self.deliver(fci, apdu.le);
                 // A `6Cxx` asks for the SELECT again, so the card stays where it was.
                 if !matches!(answer.as_slice(), [0x6C, _]) {
+                    self.selected.push(path.clone());
                     self.current = path;
                 }
                 answer
