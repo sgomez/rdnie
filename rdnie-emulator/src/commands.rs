@@ -331,12 +331,18 @@ impl Transport for EmulatedDnie {
                 return Err(Error::Transport("reader unplugged".to_owned()));
             }
         }
+        if apdu.ins == SELECT && apdu.data == IDESP && self.current.is_empty() {
+            self.strike(Step::Opening)?;
+        }
         if apdu.ins == SELECT && apdu.data == pkcs15::CDF[1] && self.current == [pkcs15::CDF[0]] {
             self.strike(Step::Certificates)?;
         }
         if apdu.ins != GET_RESPONSE {
             self.pending.clear();
-            self.channel = None;
+            // As a real DNIe, the first plain command in a channel gets `69 87` and drops the channel.
+            if self.channel.take().is_some() {
+                return Ok(vec![0x69, 0x87]);
+            }
         }
         Ok(self.answer(&apdu))
     }
@@ -363,9 +369,6 @@ impl Transport for EmulatedDnie {
     ) -> Result<R, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
-        }
-        if self.transactions == 0 {
-            self.strike(Step::Opening)?;
         }
         self.transactions += 1;
         if self.retry_lost_between_transactions && !self.pin_queries.is_empty() {
