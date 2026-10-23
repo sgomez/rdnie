@@ -186,7 +186,7 @@ fn signs_on_a_dnie_4_under_the_first_key_generation() {
 
 #[test]
 fn a_dnie_4_reports_an_atr_of_its_own() {
-    let mut three = EmulatedDnie::dnie_3();
-    let mut four = EmulatedDnie::dnie_4();
-    assert_ne!(three.reset().unwrap(), four.reset().unwrap());
+    let three = EmulatedDnie::dnie_3();
+    let four = EmulatedDnie::dnie_4();
+    assert_ne!(three.atr().unwrap(), four.atr().unwrap());
 }

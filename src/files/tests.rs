@@ -93,6 +93,10 @@ impl Transport for PlainFile {
         }
     }
 
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        unreachable!()
+    }
+
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         unreachable!()
     }

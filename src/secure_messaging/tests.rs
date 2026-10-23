@@ -247,6 +247,10 @@ impl Transport for ScriptedCard {
         Ok(self.responses.remove(0))
     }
 
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        unreachable!("the codec never reads the atr")
+    }
+
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         unreachable!("the codec never resets the card")
     }

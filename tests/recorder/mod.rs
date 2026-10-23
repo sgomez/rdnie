@@ -26,6 +26,10 @@ impl<T: Transport> Transport for Recorder<T> {
         Ok(response)
     }
 
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        self.card.atr()
+    }
+
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         self.card.reset()
     }

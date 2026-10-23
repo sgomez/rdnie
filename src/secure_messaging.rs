@@ -298,6 +298,10 @@ impl Transport for Protected<'_> {
         ))
     }
 
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        self.card.atr()
+    }
+
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         Err(Error::Transport(
             "a secure channel cannot reset the card".into(),

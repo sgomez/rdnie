@@ -43,3 +43,68 @@ fn opens_without_idesp() {
     let session = Session::open(EmulatedDnie::new(&DNIE_3_ATR)).unwrap();
     assert_eq!(session.idesp, None);
 }
+
+#[test]
+fn opens_without_resetting_the_card() {
+    let session = open(card_with_channel());
+    assert_eq!(session.transport.resets(), 0);
+}
+
+#[test]
+fn opens_twice_on_the_same_card() {
+    let card = open(card_with_channel()).into_transport();
+    let mut session = open(card);
+    assert_eq!(session.pin_retries().unwrap(), 3);
+    assert_eq!(session.transport.resets(), 0);
+}
+
+#[test]
+fn opens_after_an_operation_left_a_channel_open() {
+    let mut first = open(card_with_channel());
+    first.pin_retries().unwrap();
+    let mut session = open(first.into_transport());
+    assert_eq!(session.pin_retries().unwrap(), 3);
+    assert_eq!(session.transport.resets(), 0);
+}
+
+/// Answers `atr()` with its own ATR, whatever the card resets to.
+struct Showing(Vec<u8>, EmulatedDnie);
+
+impl crate::Transport for Showing {
+    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        self.1.transmit_raw(apdu)
+    }
+
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        Ok(self.0.clone())
+    }
+
+    fn reset(&mut self) -> Result<Vec<u8>, Error> {
+        self.1.reset()
+    }
+
+    fn transaction<R>(
+        &mut self,
+        body: impl FnOnce(&mut dyn crate::Transport) -> Result<R, Error>,
+    ) -> Result<R, Error> {
+        body(self)
+    }
+}
+
+#[test]
+fn classifies_the_atr_the_transport_holds() {
+    let open = |changes: &[(usize, u8)]| {
+        let mut atr = DNIE_3_ATR;
+        for &(index, value) in changes {
+            atr[index] = value;
+        }
+        Session::open(Showing(atr.to_vec(), EmulatedDnie::new(&DNIE_3_ATR)))
+    };
+    assert!(matches!(open(&[(7, b'X')]), Err(Error::NotDnie)));
+    assert!(matches!(open(&[(15, 0x01)]), Err(Error::LegacyDnie)));
+    assert!(matches!(
+        open(&[(18, 0x65), (19, 0x81)]),
+        Err(Error::BurnedDnie)
+    ));
+    assert!(open(&[]).is_ok());
+}
