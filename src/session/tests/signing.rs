@@ -80,3 +80,22 @@ fn signing_with_a_listed_key_reads_no_certificate_file() {
     sign_with(&mut session, &[0; 32], HashAlgorithm::Sha256).unwrap();
     assert_eq!(certificate_files_selected(&session.transport), []);
 }
+
+#[test]
+fn reports_a_wrong_digest_length_before_an_invalid_pin_format() {
+    let mut session = open(signing_card());
+    let key = session.certificates().unwrap().remove(0).key;
+    let result = session.sign(
+        &[0; 48],
+        HashAlgorithm::Sha256,
+        &key,
+        Pin::new("short".to_owned()),
+    );
+    assert!(matches!(
+        result,
+        Err(Error::DigestLength {
+            expected: 32,
+            actual: 48
+        })
+    ));
+}

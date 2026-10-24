@@ -12,7 +12,8 @@ Snapshot comparing JMulticard `4ec9494` with rdnie `7e960b5`. Line numbers rot; 
 | Certificates with their labels, the intermediate CA included | Yes |
 | Holder name, surnames and number from a certificate | Yes |
 | PIN retries without a PIN | Yes |
-| VERIFY and PKCS#1 v1.5 signature of a SHA-256/384/512 digest | Yes |
+| VERIFY without signing | Yes |
+| Signature with VERIFY: PKCS#1 v1.5 of a SHA-256/384/512 digest | Yes |
 | Status words and ATRs described in words | Yes |
 
 Every "Yes" sends the same APDUs as JMulticard. Where rdnie behaves differently, it is [on purpose](#on-purpose) or in a case no DNIe reaches ([Open](#open)).

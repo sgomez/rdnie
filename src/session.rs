@@ -12,7 +12,8 @@ use crate::{
     certificates,
     files::{self, Location},
     key_sets::{ComponentRoots, KeyGeneration},
-    pin, pkcs15, signature,
+    pin::PinGuard,
+    pkcs15, signature,
 };
 
 const IDESP: &[u8] = &[0x3F, 0x00, 0x00, 0x06];
@@ -24,9 +25,7 @@ const FILE_NOT_FOUND: StatusWord = StatusWord(0x6A82);
 /// after it. The session does not recover: open a new transport and a new session.
 pub struct Session<T: Transport> {
     transport: T,
-    authenticator: CardAuthenticator,
-    /// The count [`Session::pin_retries`] last showed, which the next sign expects.
-    shown_retries: Option<u8>,
+    pin_guard: PinGuard,
     /// The CDF, the PrKDF and the DER of each label, each read on first request and then kept.
     cdf: Option<Vec<pkcs15::Entry>>,
     prkdf: Option<Vec<pkcs15::Entry>>,
@@ -68,8 +67,7 @@ impl<T: Transport> Session<T> {
         let idesp = transport.transaction(read_idesp)?;
         Ok(Self {
             transport,
-            authenticator: CardAuthenticator::from_idesp(idesp.as_deref(), roots),
-            shown_retries: None,
+            pin_guard: PinGuard::new(CardAuthenticator::from_idesp(idesp.as_deref(), roots)),
             cdf: None,
             prkdf: None,
             ders: BTreeMap::new(),
@@ -123,22 +121,18 @@ impl<T: Transport> Session<T> {
     /// `GET CHIP INFO` or gives no retry count, and [`Error::CardReset`] or [`Error::Transport`]
     /// if either strikes during the authentication.
     pub fn pin_retries(&mut self) -> Result<u8, Error> {
-        let authenticator = &self.authenticator;
-        let retries = operation(&mut self.transport, |card| {
-            pin::retries_left(card, authenticator)
-        })?;
-        self.shown_retries = Some(retries);
-        Ok(retries)
+        self.pin_guard.read_retries(&mut self.transport)
     }
 
     /// Signs a SHA-256/384/512 digest with `key` after verifying `pin`, and returns the PKCS#1
-    /// v1.5 signature; the retries must still be those [`Session::pin_retries`] last showed.
+    /// v1.5 signature; the retries must still be those last shown, by [`Session::pin_retries`] or
+    /// by the [`Error::WrongPin`] of the previous attempt.
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidPinFormat`] and [`Error::DigestLength`] before touching the card, those of
-    /// [`Session::pin_retries`], [`Error::PinRetriesChanged`] if the retries moved between the two
-    /// phases, [`Error::WrongPin`] after the single attempt and [`Error::Status`] if the card
+    /// [`Error::DigestLength`], then [`Error::InvalidPinFormat`], before touching the card, those
+    /// of [`Session::pin_retries`], [`Error::PinRetriesChanged`] if the retries moved between the
+    /// two phases, [`Error::WrongPin`] after the single attempt and [`Error::Status`] if the card
     /// refuses the signature. The channel errors are those of [`Session::pin_retries`].
     pub fn sign(
         &mut self,
@@ -147,27 +141,30 @@ impl<T: Transport> Session<T> {
         key: &KeyReference,
         pin: Pin,
     ) -> Result<Vec<u8>, Error> {
-        pin.check_format()?;
         let digest_info = signature::digest_info(algorithm, digest)?;
-        let retries = match self.shown_retries.take() {
-            Some(shown) => shown,
-            None => self.pin_retries()?,
-        };
-        self.shown_retries = None;
-        if retries == 0 {
-            return Err(Error::PinBlocked);
-        }
-        let authenticator = &self.authenticator;
-        operation(&mut self.transport, |card| {
-            let mut channel = pin::verify(card, authenticator, pin, retries)?;
-            signature::sign(&mut channel, key, digest_info)
-        })
+        self.pin_guard
+            .verified(&mut self.transport, pin, |channel| {
+                signature::sign(channel, key, digest_info)
+            })
+    }
+
+    /// Verifies `pin` on the card without signing, under the same policy as [`Session::sign`]; a
+    /// later `sign` verifies the PIN again.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidPinFormat`] before touching the card, those of [`Session::pin_retries`],
+    /// [`Error::PinRetriesChanged`] if the retries moved between the two phases and
+    /// [`Error::WrongPin`] after the single attempt.
+    pub fn verify_pin(&mut self, pin: Pin) -> Result<(), Error> {
+        self.pin_guard
+            .verified(&mut self.transport, pin, |_| Ok(()))
     }
 
     /// The terminal key generation the card's support number selects.
     #[must_use]
     pub fn key_generation(&self) -> KeyGeneration {
-        self.authenticator.key_generation()
+        self.pin_guard.key_generation()
     }
 
     /// Ends the session and hands back the transport.

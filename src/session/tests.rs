@@ -22,6 +22,7 @@ mod pin;
 mod secure_channel;
 mod signing;
 mod trusting;
+mod verifying;
 
 pub(crate) fn card_accepting(key_sets: &[&KeySet]) -> EmulatedDnie {
     let terminals: Vec<TerminalKey> = key_sets
