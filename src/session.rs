@@ -213,11 +213,8 @@ impl<T: Transport> Session<T> {
     /// Those of [`Transport::transaction`] and [`Error::Status`] if the card refuses.
     pub fn serial_number(&mut self) -> Result<Vec<u8>, Error> {
         operation(&mut self.transport, |card| {
-            // Drops a channel a PIN operation left open, which would answer the CLA 90 command 69 87.
-            match files::select_master_file(card) {
-                Ok(()) | Err(Error::Status(_)) => {}
-                Err(error) => return Err(error),
-            }
+            // A channel a PIN operation left open would answer the CLA 90 command 69 87.
+            files::leave_any_channel(card)?;
             cwa14890::chip_serial(card)
         })
     }
