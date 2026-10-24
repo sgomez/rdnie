@@ -93,9 +93,14 @@ fn handshake(
     Ok(channel)
 }
 
-/// The chip serial from `GET CHIP INFO`, left-padded to 8 bytes.
+/// The chip serial from `GET CHIP INFO`, as the card gives it.
+pub(crate) fn chip_serial(card: &mut dyn CommandChannel) -> Result<Vec<u8>, Error> {
+    send(card, 0x90, 0xB8, 0x00, 0x00, vec![], Some(7))
+}
+
+/// The chip serial left-padded to 8 bytes.
 fn padded_serial(card: &mut dyn CommandChannel) -> Result<Vec<u8>, Error> {
-    let serial = send(card, 0x90, 0xB8, 0x00, 0x00, vec![], Some(7))?;
+    let serial = chip_serial(card)?;
     let mut padded = vec![0; SERIAL_LENGTH.saturating_sub(serial.len())];
     padded.extend(serial);
     Ok(padded)

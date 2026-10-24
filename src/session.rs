@@ -10,6 +10,7 @@ use crate::{
     card_authenticator::CardAuthenticator,
     certificates,
     channel::{CommandChannel, PlainChannel},
+    cwa14890,
     files::{self, Location},
     key_sets::{ComponentRoots, KeyGeneration},
     pin::PinGuard,
@@ -26,6 +27,7 @@ const FILE_NOT_FOUND: StatusWord = StatusWord(0x6A82);
 pub struct Session<T: Transport> {
     transport: T,
     atr: Atr,
+    idesp: Option<String>,
     pin_guard: PinGuard,
     /// The CDF, the PrKDF and the DER of each label, each read on first request and then kept.
     cdf: Option<Vec<pkcs15::Entry>>,
@@ -71,6 +73,7 @@ impl<T: Transport> Session<T> {
             transport,
             atr,
             pin_guard: PinGuard::new(CardAuthenticator::from_idesp(idesp.as_deref(), roots)),
+            idesp,
             cdf: None,
             prkdf: None,
             ders: BTreeMap::new(),
@@ -187,6 +190,29 @@ impl<T: Transport> Session<T> {
     #[must_use]
     pub fn atr(&self) -> &Atr {
         &self.atr
+    }
+
+    /// The IDESP [`Session::open`] read, as `getIdesp`, without touching the card; `None` for a
+    /// card without one.
+    #[must_use]
+    pub fn idesp(&self) -> Option<&str> {
+        self.idesp.as_deref()
+    }
+
+    /// The kind of card, as `getCardName`. `Session::open` accepts no other, and a 3.0 and a 4.0
+    /// run the same card OS, so they are not told apart.
+    #[must_use]
+    pub fn card_name(&self) -> &'static str {
+        "DNIe 3.0/4.0"
+    }
+
+    /// The chip serial, as `getSerialNumber`, from one `GET CHIP INFO` in its own transaction.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Transport::transaction`] and [`Error::Status`] if the card refuses.
+    pub fn serial_number(&mut self) -> Result<Vec<u8>, Error> {
+        operation(&mut self.transport, cwa14890::chip_serial)
     }
 
     /// The terminal key generation the card's support number selects.

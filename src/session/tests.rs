@@ -9,8 +9,8 @@ use x509_cert::der::{Decode, Encode};
 use crate::{
     DigestAlgorithm, Error, KeyGeneration, Pin, StatusWord,
     emulator::{
-        DEFAULT_PIN, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, ResponseShape, Step,
-        TerminalKey, component_root_public_key,
+        DEFAULT_PIN, DNIE_3_ATR, DNIE_4_ATR, Delivery, EmulatedDnie, HandshakeFault,
+        HolderCertificate, ResponseShape, Step, TerminalKey, component_root_public_key,
     },
     key_sets::{ComponentRoots, KeySet, R1_PIN, R1_USER, R2_PIN, R2_USER},
 };

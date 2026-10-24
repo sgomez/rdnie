@@ -55,7 +55,7 @@ fn run() -> Result<(), Error> {
             println!("IDESP read: fail ({status})");
         }
     })?;
-    println!("card: DNIe 3.0/4.0");
+    println!("card: {}", session.card_name());
     if arguments
         .iter()
         .any(|argument| argument == "--leave-channel")
