@@ -74,3 +74,8 @@ detect:
 [positional-arguments]
 probe *args:
     cargo run --quiet --example probe -- "$@"
+
+# Latency probe on a real DNIe (#145); run by the card's holder only.
+[positional-arguments]
+latency *args:
+    cargo run --example latency -- "$@"
