@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "rdnie"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cbc",
  "der",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "rdnie-emulator"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cbc",
  "des",

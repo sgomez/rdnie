@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/sgomez/rdnie/compare/rdnie-emulator-v0.2.0...rdnie-emulator-v0.3.0) - 2026-10-24
+
+### Changed
+
+- *(atr)* [**breaking**] add Atr with check and Display, return it from Transport::atr and Session::atr
+- *(session)* [**breaking**] replace Certificate with Session::labels and Session::private_key
+- *(api)* [**breaking**] rename pin_retries_left and DigestAlgorithm, make Response crate-private
+- *(transport)* [**breaking**] split the public transport into Transport and Port
+
 ## [0.2.0](https://github.com/sgomez/rdnie/compare/rdnie-emulator-v0.1.1...rdnie-emulator-v0.2.0) - 2026-10-24
 
 ### Changed
