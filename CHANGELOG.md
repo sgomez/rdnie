@@ -11,11 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - *(session)* `Session::verify_pin` verifies the PIN without signing
 - *(atr)* `Atr`, with `check` (whether `Session::open` accepts the card, without touching it), `as_bytes` and `Display`
 - *(session)* `Session::atr` returns the `Atr` `open` classified, without touching the card
+- *(session)* `Session::private_key` returns the `KeyReference` of a label, as `getPrivateKey`
+- *(session)* `Session::idesp` and `card_name`, without touching the card, and `serial_number`, from one `GET CHIP INFO`
+- *(signature)* `DigestAlgorithm::digest_length`
 
 ### Changed
 
 - *(session)* [**breaking**] rename `Session::pin_retries` to `pin_retries_left`
-- *(signature)* [**breaking**] rename `HashAlgorithm` to `DigestAlgorithm`, and add `DigestAlgorithm::digest_length`
+- *(signature)* [**breaking**] rename `HashAlgorithm` to `DigestAlgorithm`
+- *(session)* [**breaking**] rename `Session::certificates` to `labels`, which returns the labels as `String`s: get each key with `Session::private_key`
+- *(certificates)* [**breaking**] remove `Certificate`
 - *(apdu)* [**breaking**] make `Response` crate-private; `StatusWord` stays public
 - *(transport)* [**breaking**] `Transport::atr` returns `Atr` instead of `Vec<u8>`
 - *(atr)* [**breaking**] remove `is_dnie` and `describe_atr`: use `Atr::check` and `Atr`'s `Display`

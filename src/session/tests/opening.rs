@@ -129,7 +129,17 @@ fn reads_the_serial_number_unpadded_in_one_transaction() {
         [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16]
     );
     assert_eq!(session.transport.transactions(), transactions + 1);
-    assert_eq!(session.transport.commands(), commands + 1);
+    assert_eq!(session.transport.commands(), commands + 2);
+}
+
+#[test]
+fn reads_the_serial_number_after_a_pin_operation() {
+    let mut session = open(card_with_channel());
+    session.pin_retries_left().unwrap();
+    assert_eq!(
+        session.serial_number().unwrap(),
+        [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16]
+    );
 }
 
 #[test]

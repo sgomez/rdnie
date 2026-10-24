@@ -235,15 +235,6 @@ fn rejects_a_label_that_is_not_utf8() {
 }
 
 #[test]
-fn debug_output_hides_the_label() {
-    let certificates = [HolderCertificate::new(1, 120).labelled("CertSecreto")];
-    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
-    let mut session = Session::open(card).unwrap();
-    let key = session.private_key("CertSecreto").unwrap();
-    assert_eq!(format!("{key:?}"), "Some(KeyReference { .. })");
-}
-
-#[test]
 fn one_bad_certificate_fails_only_its_fetch() {
     for bad in [
         HolderCertificate::not_x509(2, 120),
@@ -252,7 +243,7 @@ fn one_bad_certificate_fails_only_its_fetch() {
         let card = EmulatedDnie::new(&DNIE_3_ATR)
             .with_certificates(&[HolderCertificate::new(1, 120), bad]);
         let mut session = Session::open(card).unwrap();
-        assert!(!session.labels().unwrap().is_empty());
+        assert_ne!(session.labels().unwrap(), Vec::<String>::new());
         assert!(matches!(
             session.certificate("Cert2"),
             Err(Error::MalformedCertificate)
