@@ -172,7 +172,7 @@ fn loads_a_compressed_certificate_just_under_the_cap() {
 /// A compressed certificate that inflates to exactly `length` bytes.
 fn compressed_of_length(length: usize) -> HolderCertificate {
     // Padding grows the DER two bytes at a time (subject and issuer); a serial of 0x80 adds one.
-    let id = if length % 2 == 0 { 0x80 } else { 1 };
+    let id = if length.is_multiple_of(2) { 0x80 } else { 1 };
     let mut asked = length / 2;
     loop {
         let certificate = HolderCertificate::new(id, asked);

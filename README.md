@@ -61,7 +61,7 @@ fn main() -> Result<(), rdnie::Error> {
 | macOS | nothing | nothing |
 | Windows | nothing | nothing |
 
-The minimum supported Rust version is 1.85.
+The minimum supported Rust version is 1.87.
 
 ## Features
 

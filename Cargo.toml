@@ -2,7 +2,7 @@
 name = "rdnie"
 version = "0.1.2"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 license = "EUPL-1.2"
 description = "Spanish electronic ID card (DNIe) driver over PC/SC: CWA-14890 secure channel, certificates, PIN retry counter and signing"
 repository = "https://github.com/sgomez/rdnie"

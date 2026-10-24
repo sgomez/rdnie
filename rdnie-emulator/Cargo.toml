@@ -2,7 +2,7 @@
 name = "rdnie-emulator"
 version = "0.1.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 license = "EUPL-1.2"
 description = "Emulated Spanish electronic ID card (DNIe) behind rdnie's Transport, for tests without a card"
 repository = "https://github.com/sgomez/rdnie"
