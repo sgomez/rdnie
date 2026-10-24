@@ -4,3 +4,5 @@
 /fuzz/artifacts
 /fuzz/coverage
 /mutants.out*
+/bench/jmulticard/target
+/bench/results

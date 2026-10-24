@@ -88,3 +88,24 @@ probe *args:
 [positional-arguments]
 latency *args:
     cargo run --example latency -- "$@"
+
+# Benchmark on a real DNIe, run by the card's holder; `bench/README.md` compares it with JMulticard and OpenSC.
+[positional-arguments]
+bench *args:
+    cargo run --quiet --release --example bench -- "$@"
+
+# JMulticard counterpart of `bench`; needs a JDK and Maven.
+[positional-arguments]
+bench-jmulticard *args:
+    mvn -q -f bench/jmulticard/pom.xml compile dependency:build-classpath -Dmdep.outputFile=target/classpath
+    java -cp "bench/jmulticard/target/classes:$(cat bench/jmulticard/target/classpath)" Bench "$@"
+
+# OpenSC counterpart of `bench`, through its PKCS#11 module; needs uv.
+[positional-arguments]
+bench-opensc *args:
+    uv run --no-project --with pykcs11 python bench/opensc.py "$@"
+
+# A bench recipe under pcsc-spy, e.g. `just bench-spy bench --runs 1`: its PC/SC call counts and times only.
+[positional-arguments]
+bench-spy *args:
+    bench/spy.sh just "$@"
