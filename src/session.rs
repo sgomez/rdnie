@@ -6,11 +6,11 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Certificate, Error, HashAlgorithm, KeyReference, Pin, StatusWord, Transport,
-    atr::check_dnie_3,
+    Atr, DigestAlgorithm, Error, KeyReference, Pin, StatusWord, Transport,
     card_authenticator::CardAuthenticator,
     certificates,
     channel::{CommandChannel, PlainChannel},
+    cwa14890,
     files::{self, Location},
     key_sets::{ComponentRoots, KeyGeneration},
     pin::PinGuard,
@@ -26,6 +26,8 @@ const FILE_NOT_FOUND: StatusWord = StatusWord(0x6A82);
 /// after it. The session does not recover: open a new transport and a new session.
 pub struct Session<T: Transport> {
     transport: T,
+    atr: Atr,
+    idesp: Option<String>,
     pin_guard: PinGuard,
     /// The CDF, the PrKDF and the DER of each label, each read on first request and then kept.
     cdf: Option<Vec<pkcs15::Entry>>,
@@ -64,27 +66,48 @@ impl<T: Transport> Session<T> {
     }
 
     fn open_with(mut transport: T, roots: ComponentRoots) -> Result<Self, Error> {
-        check_dnie_3(&transport.atr()?)?;
+        let atr = transport.atr()?;
+        atr.check()?;
         let idesp = operation(&mut transport, read_idesp)?;
         Ok(Self {
             transport,
+            atr,
             pin_guard: PinGuard::new(CardAuthenticator::from_idesp(idesp.as_deref(), roots)),
+            idesp,
             cdf: None,
             prkdf: None,
             ders: BTreeMap::new(),
         })
     }
 
-    /// Lists the holder's certificates that have a private key, each with its PKCS#15 label and
-    /// key, without a PIN and without reading any certificate file. The session keeps the CDF
-    /// and the PrKDF from their first read; a failed read keeps nothing of that file.
+    /// Lists the PKCS#15 labels of the holder's certificates that have a private key, as
+    /// `getAliases`, without a PIN and without reading any certificate file. The session keeps the
+    /// CDF and the PrKDF from their first read; a failed read keeps nothing of that file.
     ///
     /// # Errors
     ///
     /// Those of [`Session::open`], [`Error::Status`] if a directory cannot be read and
     /// [`Error::MalformedPkcs15`] if it cannot be decoded, a certificate has no UTF-8 label or its
     /// key has no file in its path.
-    pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
+    pub fn labels(&mut self) -> Result<Vec<String>, Error> {
+        Ok(self.keyed()?.into_iter().map(|(label, _)| label).collect())
+    }
+
+    /// The private key of the certificate labelled `label`, as `getPrivateKey`. `None` if no
+    /// certificate has that label or it has no key; with duplicates the last one wins.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Session::labels`].
+    pub fn private_key(&mut self, label: &str) -> Result<Option<KeyReference>, Error> {
+        Ok(self
+            .keyed()?
+            .into_iter()
+            .rev()
+            .find_map(|(keyed, key)| (keyed == label).then_some(key)))
+    }
+
+    pub(crate) fn keyed(&mut self) -> Result<Vec<(String, KeyReference)>, Error> {
         let cdf = cached(&mut self.cdf, &mut self.transport, certificates::cdf)?;
         let prkdf = cached(&mut self.prkdf, &mut self.transport, certificates::prkdf)?;
         certificates::keyed(cdf, prkdf)
@@ -122,24 +145,24 @@ impl<T: Transport> Session<T> {
     /// [`Error::Status`] if the card refuses `INTERNAL AUTHENTICATE`, `GET CHALLENGE` or
     /// `GET CHIP INFO` or gives no retry count, and [`Error::CardReset`] or [`Error::Transport`]
     /// if either strikes during the authentication.
-    pub fn pin_retries(&mut self) -> Result<u8, Error> {
+    pub fn pin_retries_left(&mut self) -> Result<u8, Error> {
         self.pin_guard.read_retries(&mut self.transport)
     }
 
     /// Signs a SHA-256/384/512 digest with `key` after verifying `pin`, and returns the PKCS#1
-    /// v1.5 signature; the retries must still be those last shown, by [`Session::pin_retries`] or
+    /// v1.5 signature; the retries must still be those last shown, by [`Session::pin_retries_left`] or
     /// by the [`Error::WrongPin`] of the previous attempt.
     ///
     /// # Errors
     ///
     /// [`Error::DigestLength`], then [`Error::InvalidPinFormat`], before touching the card, those
-    /// of [`Session::pin_retries`], [`Error::PinRetriesChanged`] if the retries moved between the
+    /// of [`Session::pin_retries_left`], [`Error::PinRetriesChanged`] if the retries moved between the
     /// two phases, [`Error::WrongPin`] after the single attempt and [`Error::Status`] if the card
-    /// refuses the signature. The channel errors are those of [`Session::pin_retries`].
+    /// refuses the signature. The channel errors are those of [`Session::pin_retries_left`].
     pub fn sign(
         &mut self,
         digest: &[u8],
-        algorithm: HashAlgorithm,
+        algorithm: DigestAlgorithm,
         key: &KeyReference,
         pin: Pin,
     ) -> Result<Vec<u8>, Error> {
@@ -155,12 +178,45 @@ impl<T: Transport> Session<T> {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidPinFormat`] before touching the card, those of [`Session::pin_retries`],
+    /// [`Error::InvalidPinFormat`] before touching the card, those of [`Session::pin_retries_left`],
     /// [`Error::PinRetriesChanged`] if the retries moved between the two phases and
     /// [`Error::WrongPin`] after the single attempt.
     pub fn verify_pin(&mut self, pin: Pin) -> Result<(), Error> {
         self.pin_guard
             .verified(&mut self.transport, pin, |_| Ok(()))
+    }
+
+    /// The ATR [`Session::open`] classified, without touching the card.
+    #[must_use]
+    pub fn atr(&self) -> &Atr {
+        &self.atr
+    }
+
+    /// The IDESP [`Session::open`] read, as `getIdesp`, without touching the card; `None` for a
+    /// card without one.
+    #[must_use]
+    pub fn idesp(&self) -> Option<&str> {
+        self.idesp.as_deref()
+    }
+
+    /// The kind of card, as `getCardName`. `Session::open` accepts no other, and a 3.0 and a 4.0
+    /// run the same card OS, so they are not told apart.
+    #[must_use]
+    pub fn card_name(&self) -> &'static str {
+        "DNIe 3.0/4.0"
+    }
+
+    /// The chip serial, as `getSerialNumber`, from one `GET CHIP INFO` in its own transaction.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Transport::transaction`] and [`Error::Status`] if the card refuses.
+    pub fn serial_number(&mut self) -> Result<Vec<u8>, Error> {
+        operation(&mut self.transport, |card| {
+            // A channel a PIN operation left open would answer the CLA 90 command 69 87.
+            files::leave_any_channel(card)?;
+            cwa14890::chip_serial(card)
+        })
     }
 
     /// The terminal key generation the card's support number selects.

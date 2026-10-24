@@ -47,10 +47,7 @@ impl CardAuthenticator {
         &self,
         mut card: PlainChannel<'a>,
     ) -> Result<SecureChannel<'a>, Error> {
-        match files::select_master_file(&mut card) {
-            Ok(()) | Err(Error::Status(_)) => {}
-            Err(error) => return Err(error),
-        }
+        files::leave_any_channel(&mut card)?;
         cwa14890::open(card, self.keys(Channel::Pin), &self.roots)
     }
 

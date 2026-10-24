@@ -1,6 +1,6 @@
 // Derived from JMulticard: see LICENSE.jmulticard.md.
 
-use crate::Error;
+use crate::{Atr, Error};
 
 /// The connection to the card: PC/SC in production, an emulator in tests.
 ///
@@ -12,7 +12,7 @@ pub trait Transport {
     ///
     /// [`Error::Transport`] if it cannot be read, [`Error::CardReset`] if the card was reset since
     /// the last command and [`Error::CardRemoved`] if it left the reader.
-    fn atr(&self) -> Result<Vec<u8>, Error>;
+    fn atr(&self) -> Result<Atr, Error>;
 
     /// Runs `body` with exclusive access to the card, through a [`Port`] alive only inside it.
     ///

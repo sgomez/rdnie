@@ -63,8 +63,8 @@ fn recorded(delivery: Delivery, certificates: &[HolderCertificate]) -> Vec<(Vec<
         .delivering(delivery)
         .with_certificates(certificates);
     let mut session = Session::open(Recorder::new(card)).unwrap();
-    for certificate in session.certificates().unwrap() {
-        session.certificate(&certificate.label).unwrap().unwrap();
+    for label in session.labels().unwrap() {
+        session.certificate(&label).unwrap().unwrap();
     }
     session.into_transport().exchanges
 }

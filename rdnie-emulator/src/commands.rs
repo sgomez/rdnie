@@ -371,11 +371,11 @@ impl Port for InTransaction<'_> {
 }
 
 impl Transport for EmulatedDnie {
-    fn atr(&self) -> Result<Vec<u8>, Error> {
+    fn atr(&self) -> Result<Atr, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
         }
-        Ok(self.atr.clone())
+        Ok(Atr::new(self.atr.clone()))
     }
 
     fn transaction<R>(

@@ -8,10 +8,10 @@ use rdnie_emulator::{
 fn assert_lists(card: EmulatedDnie, expected: &[Vec<u8>]) {
     let mut session = Session::open(card).unwrap();
     let listed: Vec<Vec<u8>> = session
-        .certificates()
+        .labels()
         .unwrap()
         .into_iter()
-        .map(|certificate| session.certificate(&certificate.label).unwrap().unwrap())
+        .map(|label| session.certificate(&label).unwrap().unwrap())
         .collect();
     let lengths = |ders: &[Vec<u8>]| ders.iter().map(Vec::len).collect::<Vec<_>>();
     assert!(
@@ -98,20 +98,20 @@ fn lists_certificates_when_the_card_wants_the_exact_le() {
 #[test]
 fn reports_missing_cdf_with_its_status_word() {
     let card = EmulatedDnie::new(&DNIE_3_ATR);
-    let error = Session::open(card).unwrap().certificates().unwrap_err();
+    let error = Session::open(card).unwrap().labels().unwrap_err();
     assert_eq!(error.to_string(), "card answered file not found (6A 82)");
 }
 
 fn load_error(certificates: &[HolderCertificate]) -> Error {
     let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(certificates);
-    Session::open(card).unwrap().certificates().unwrap_err()
+    Session::open(card).unwrap().labels().unwrap_err()
 }
 
 /// The error fetching `Cert1`, after a listing that succeeds.
 fn fetch_error(certificates: &[HolderCertificate]) -> Error {
     let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(certificates);
     let mut session = Session::open(card).unwrap();
-    session.certificates().unwrap();
+    session.labels().unwrap();
     session.certificate("Cert1").unwrap_err()
 }
 
@@ -210,8 +210,7 @@ fn rejects_a_compressed_certificate_that_inflates_one_byte_past_the_cap() {
 
 fn labels(certificates: &[HolderCertificate]) -> Vec<String> {
     let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(certificates);
-    let listed = Session::open(card).unwrap().certificates().unwrap();
-    listed.into_iter().map(|c| c.label).collect()
+    Session::open(card).unwrap().labels().unwrap()
 }
 
 #[test]
@@ -236,14 +235,6 @@ fn rejects_a_label_that_is_not_utf8() {
 }
 
 #[test]
-fn debug_output_hides_the_label() {
-    let certificates = [HolderCertificate::new(1, 120).labelled("CertSecreto")];
-    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
-    let listed = Session::open(card).unwrap().certificates().unwrap();
-    assert_eq!(format!("{:?}", listed[0]), "Certificate { .. }");
-}
-
-#[test]
 fn one_bad_certificate_fails_only_its_fetch() {
     for bad in [
         HolderCertificate::not_x509(2, 120),
@@ -252,13 +243,29 @@ fn one_bad_certificate_fails_only_its_fetch() {
         let card = EmulatedDnie::new(&DNIE_3_ATR)
             .with_certificates(&[HolderCertificate::new(1, 120), bad]);
         let mut session = Session::open(card).unwrap();
-        assert!(!session.certificates().unwrap().is_empty());
+        assert_ne!(session.labels().unwrap(), Vec::<String>::new());
         assert!(matches!(
             session.certificate("Cert2"),
             Err(Error::MalformedCertificate)
         ));
         assert!(session.certificate("Cert1").unwrap().is_some());
     }
+}
+
+#[test]
+fn private_key_is_some_for_a_keyed_label_only() {
+    let certificates = [
+        HolderCertificate::new(1, 120).labelled("CertFirma"),
+        HolderCertificate::new(2, 120)
+            .labelled("CertCA")
+            .without_key(),
+    ];
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
+    let mut session = Session::open(card).unwrap();
+    assert!(session.private_key("CertFirma").unwrap().is_some());
+    assert_eq!(session.private_key("CertCA").unwrap(), None);
+    assert_eq!(session.private_key("Other").unwrap(), None);
+    assert!(session.certificate("CertCA").unwrap().is_some());
 }
 
 fn fetch(certificates: &[HolderCertificate], label: &str) -> Option<Vec<u8>> {
@@ -321,7 +328,7 @@ fn with_directory(directory: [[u8; 2]; 2], bytes: &[u8]) -> Error {
     let card = EmulatedDnie::new(&DNIE_3_ATR)
         .with_certificates(&certificates)
         .with_file(&directory, bytes.to_vec());
-    Session::open(card).unwrap().certificates().unwrap_err()
+    Session::open(card).unwrap().labels().unwrap_err()
 }
 
 #[test]
@@ -369,8 +376,7 @@ fn bounds_the_cdf_apart_from_the_prkdf() {
     let card = EmulatedDnie::new(&DNIE_3_ATR)
         .with_certificates(&certificates)
         .with_file(&PRKDF, prkdf(&reversed));
-    let listed = Session::open(card).unwrap().certificates().unwrap();
-    let listed: Vec<String> = listed.into_iter().map(|c| c.label).collect();
+    let listed = Session::open(card).unwrap().labels().unwrap();
     assert_eq!(listed, cert_labels(1..=10));
 }
 
@@ -415,7 +421,7 @@ fn load_object(directory: [[u8; 2]; 2], tags: [u8; 8]) -> Result<usize, Error> {
     let card = EmulatedDnie::new(&DNIE_3_ATR)
         .with_certificates(&[HolderCertificate::new(1, 120)])
         .with_file(&directory, object(tags));
-    Ok(Session::open(card)?.certificates()?.len())
+    Ok(Session::open(card)?.labels()?.len())
 }
 
 #[test]
@@ -453,8 +459,9 @@ fn rejects_a_prkdf_object_whose_expected_child_has_another_tag() {
 fn debug_output_hides_the_key_reference() {
     let certificates = [HolderCertificate::new(1, 120)];
     let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(&certificates);
-    let listed = Session::open(card).unwrap().certificates().unwrap();
-    assert_eq!(format!("{:?}", listed[0].key), "KeyReference { .. }");
+    let mut session = Session::open(card).unwrap();
+    let key = session.private_key("Cert1").unwrap().unwrap();
+    assert_eq!(format!("{key:?}"), "KeyReference { .. }");
 }
 
 fn followed_by_a_non_sequence(mut directory: Vec<u8>) -> Vec<u8> {
@@ -469,8 +476,7 @@ fn loads_the_objects_of_a_cdf_followed_by_a_tlv_that_is_not_a_sequence() {
     let card = EmulatedDnie::new(&DNIE_3_ATR)
         .with_certificates(&certificates)
         .with_file(&CDF, followed_by_a_non_sequence(cdf(&certificates)));
-    let listed = Session::open(card).unwrap().certificates().unwrap();
-    let listed: Vec<String> = listed.into_iter().map(|c| c.label).collect();
+    let listed = Session::open(card).unwrap().labels().unwrap();
     assert_eq!(listed, cert_labels(1..=2));
 }
 
@@ -480,7 +486,6 @@ fn loads_the_objects_of_a_prkdf_followed_by_a_tlv_that_is_not_a_sequence() {
     let card = EmulatedDnie::new(&DNIE_3_ATR)
         .with_certificates(&certificates)
         .with_file(&PRKDF, followed_by_a_non_sequence(prkdf(&certificates)));
-    let listed = Session::open(card).unwrap().certificates().unwrap();
-    let listed: Vec<String> = listed.into_iter().map(|c| c.label).collect();
+    let listed = Session::open(card).unwrap().labels().unwrap();
     assert_eq!(listed, cert_labels(1..=2));
 }

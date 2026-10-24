@@ -1,7 +1,7 @@
 //! A consumer opens, verifies the PIN and signs against the emulated card through `Session` only.
 
 use rdnie::{
-    Error, HashAlgorithm, Holder, KeyGeneration, Pin, SIGNATURE_LABEL, Session, Transport,
+    DigestAlgorithm, Error, Holder, KeyGeneration, Pin, SIGNATURE_LABEL, Session, Transport,
 };
 use rdnie_emulator::{DEFAULT_PIN, EmulatedDnie};
 use rsa::{
@@ -19,16 +19,10 @@ fn open(card: EmulatedDnie) -> Session<EmulatedDnie> {
 }
 
 fn sign(session: &mut Session<EmulatedDnie>, label: &str, pin: &str) -> Result<Vec<u8>, Error> {
-    let key = session
-        .certificates()
-        .unwrap()
-        .into_iter()
-        .find(|certificate| certificate.label == label)
-        .unwrap()
-        .key;
+    let key = session.private_key(label).unwrap().unwrap();
     session.sign(
         &Sha256::digest(b"document"),
-        HashAlgorithm::Sha256,
+        DigestAlgorithm::Sha256,
         &key,
         Pin::new(pin.to_owned()),
     )
@@ -55,21 +49,21 @@ fn public_key(der: &[u8]) -> RsaPublicKey {
 
 #[test]
 fn starts_with_three_retries() {
-    assert_eq!(open(EmulatedDnie::dnie_3()).pin_retries().unwrap(), 3);
+    assert_eq!(open(EmulatedDnie::dnie_3()).pin_retries_left().unwrap(), 3);
 }
 
 #[test]
 fn reports_the_retries_it_was_built_with() {
     for retries in 1..=3 {
         let card = EmulatedDnie::dnie_3().with_pin_retries(retries);
-        assert_eq!(open(card).pin_retries().unwrap(), retries);
+        assert_eq!(open(card).pin_retries_left().unwrap(), retries);
     }
 }
 
 #[test]
 fn reports_a_blocked_pin_with_no_retries_left() {
     let mut session = open(EmulatedDnie::dnie_3().with_pin_retries(0));
-    assert!(matches!(session.pin_retries(), Err(Error::PinBlocked)));
+    assert!(matches!(session.pin_retries_left(), Err(Error::PinBlocked)));
     assert!(matches!(
         sign(&mut session, SIGNATURE_LABEL, DEFAULT_PIN),
         Err(Error::PinBlocked)
@@ -89,7 +83,7 @@ fn a_wrong_pin_costs_one_retry() {
         sign(&mut session, SIGNATURE_LABEL, "WrongPin1"),
         Err(Error::WrongPin { retries_left: 2 })
     ));
-    assert_eq!(session.pin_retries().unwrap(), 2);
+    assert_eq!(session.pin_retries_left().unwrap(), 2);
 }
 
 #[test]
@@ -148,7 +142,7 @@ fn issues_the_certificates_to_a_fictitious_holder() {
 fn opens_the_secure_channel_only_trusting_its_component_root() {
     let mut session = Session::open(EmulatedDnie::dnie_3()).unwrap();
     assert!(matches!(
-        session.pin_retries(),
+        session.pin_retries_left(),
         Err(Error::SecureChannel(_))
     ));
 }
@@ -159,7 +153,7 @@ fn opens_a_dnie_3_and_a_dnie_4_under_each_key_generation() {
         for card in [EmulatedDnie::dnie_3(), EmulatedDnie::dnie_4()] {
             let mut session = open(card.with_key_generation(generation));
             assert_eq!(session.key_generation(), generation);
-            assert_eq!(session.pin_retries().unwrap(), 3);
+            assert_eq!(session.pin_retries_left().unwrap(), 3);
         }
     }
 }

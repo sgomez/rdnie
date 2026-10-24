@@ -51,6 +51,14 @@ pub(crate) fn select_master_file(card: &mut dyn CommandChannel) -> Result<(), Er
         .map(drop)
 }
 
+/// Selects the master file, ignoring a refusal, to drop a channel a previous operation left open.
+pub(crate) fn leave_any_channel(card: &mut dyn CommandChannel) -> Result<(), Error> {
+    match select_master_file(card) {
+        Ok(()) | Err(Error::Status(_)) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 /// `SELECT` of the master file by name.
 pub(crate) fn master_file_selection() -> Command {
     selection(0x04, MASTER_FILE_NAME)
