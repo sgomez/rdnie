@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Certificate, DigestAlgorithm, Error, KeyReference, Pin, StatusWord, Transport,
+    DigestAlgorithm, Error, KeyReference, Pin, StatusWord, Transport,
     atr::check_dnie_3,
     card_authenticator::CardAuthenticator,
     certificates,
@@ -75,16 +75,34 @@ impl<T: Transport> Session<T> {
         })
     }
 
-    /// Lists the holder's certificates that have a private key, each with its PKCS#15 label and
-    /// key, without a PIN and without reading any certificate file. The session keeps the CDF
-    /// and the PrKDF from their first read; a failed read keeps nothing of that file.
+    /// Lists the PKCS#15 labels of the holder's certificates that have a private key, as
+    /// `getAliases`, without a PIN and without reading any certificate file. The session keeps the
+    /// CDF and the PrKDF from their first read; a failed read keeps nothing of that file.
     ///
     /// # Errors
     ///
     /// Those of [`Session::open`], [`Error::Status`] if a directory cannot be read and
     /// [`Error::MalformedPkcs15`] if it cannot be decoded, a certificate has no UTF-8 label or its
     /// key has no file in its path.
-    pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
+    pub fn labels(&mut self) -> Result<Vec<String>, Error> {
+        Ok(self.keyed()?.into_iter().map(|(label, _)| label).collect())
+    }
+
+    /// The private key of the certificate labelled `label`, as `getPrivateKey`. `None` if no
+    /// certificate has that label or it has no key; with duplicates the last one wins.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Session::labels`].
+    pub fn private_key(&mut self, label: &str) -> Result<Option<KeyReference>, Error> {
+        Ok(self
+            .keyed()?
+            .into_iter()
+            .rev()
+            .find_map(|(keyed, key)| (keyed == label).then_some(key)))
+    }
+
+    pub(crate) fn keyed(&mut self) -> Result<Vec<(String, KeyReference)>, Error> {
         let cdf = cached(&mut self.cdf, &mut self.transport, certificates::cdf)?;
         let prkdf = cached(&mut self.prkdf, &mut self.transport, certificates::prkdf)?;
         certificates::keyed(cdf, prkdf)

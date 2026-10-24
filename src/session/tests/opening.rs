@@ -60,7 +60,7 @@ fn opens_after_an_operation_left_a_channel_open() {
 fn reads_after_a_channel_left_open_between_operations() {
     let mut session = open(signing_card());
     session.pin_retries_left().unwrap();
-    assert_eq!(session.certificates().unwrap().len(), 1);
+    assert_eq!(session.labels().unwrap().len(), 1);
 }
 
 #[test]

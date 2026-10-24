@@ -42,20 +42,18 @@ fn listed_card() -> EmulatedDnie {
 #[test]
 fn a_second_listing_sends_nothing_to_the_card() {
     let mut session = open(listed_card());
-    let first = session.certificates().unwrap();
+    let first = session.labels().unwrap();
     let sent = session.transport.commands();
-    let second = session.certificates().unwrap();
+    let second = session.labels().unwrap();
     assert_eq!(session.transport.commands(), sent);
-    let labels =
-        |list: &[crate::Certificate]| list.iter().map(|c| c.label.clone()).collect::<Vec<_>>();
-    assert_eq!(labels(&first), labels(&second));
+    assert_eq!(first, second);
     assert_eq!(first.len(), 2);
 }
 
 #[test]
 fn a_fetch_after_a_listing_reads_only_the_certificate_file() {
     let mut session = open(listed_card());
-    session.certificates().unwrap();
+    session.labels().unwrap();
     let selected = session.transport.selected().len();
     assert!(session.certificate("CertFirma").unwrap().is_some());
     let cdf = crate::emulator::CDF.to_vec();
@@ -91,15 +89,15 @@ fn a_failed_load_is_retried_on_the_next_call() {
         Session::open_with_roots(Unplugged(listed_card(), false), ComponentRoots::embedded())
             .unwrap();
     session.transport.1 = true;
-    assert!(matches!(session.certificates(), Err(Error::Transport(_))));
+    assert!(matches!(session.labels(), Err(Error::Transport(_))));
     session.transport.1 = false;
-    assert_eq!(session.certificates().unwrap().len(), 2);
+    assert_eq!(session.labels().unwrap().len(), 2);
 }
 
 #[test]
 fn listing_selects_no_certificate_file() {
     let mut session = open(listed_card());
-    assert_eq!(session.certificates().unwrap().len(), 2);
+    assert_eq!(session.labels().unwrap().len(), 2);
     assert_eq!(certificate_files_selected(&session.transport), []);
 }
 
@@ -126,7 +124,7 @@ fn a_corrupt_certificate_fails_only_its_fetch() {
         HolderCertificate::not_x509(2, 120).labelled("CertRota"),
     ]);
     let mut session = open(card);
-    assert_eq!(session.certificates().unwrap().len(), 2);
+    assert_eq!(session.labels().unwrap().len(), 2);
     assert!(matches!(
         session.certificate("CertRota"),
         Err(Error::MalformedCertificate)
@@ -138,10 +136,7 @@ fn a_corrupt_certificate_fails_only_its_fetch() {
 fn a_failed_prkdf_read_keeps_the_cdf() {
     let card = listed_card().with_file(&crate::emulator::PRKDF, vec![0x00; 16]);
     let mut session = open(card);
-    assert!(matches!(
-        session.certificates(),
-        Err(Error::MalformedPkcs15)
-    ));
+    assert!(matches!(session.labels(), Err(Error::MalformedPkcs15)));
     let sent = session.transport.selected().len();
     assert!(session.certificate("CertFirma").unwrap().is_some());
     let cdf = crate::emulator::CDF.to_vec();
@@ -153,7 +148,7 @@ fn a_failed_certificate_read_caches_nothing() {
     let mut session =
         Session::open_with_roots(Unplugged(listed_card(), false), ComponentRoots::embedded())
             .unwrap();
-    session.certificates().unwrap();
+    session.labels().unwrap();
     session.transport.1 = true;
     assert!(matches!(
         session.certificate("CertFirma"),

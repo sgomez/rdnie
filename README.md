@@ -30,21 +30,19 @@ use sha2::{Digest, Sha256};
 
 fn main() -> Result<(), rdnie::Error> {
     let mut session = Session::open(PcscTransport::connect_first_dnie()?)?;
-    let certificates = session.certificates()?;
-    let signing = certificates
-        .iter()
-        .find(|certificate| certificate.label == SIGNATURE_LABEL)
-        .expect("a DNIe has a signature certificate");
+    let signing = session
+        .private_key(SIGNATURE_LABEL)?
+        .expect("a DNIe has a signature key");
 
     let retries = session.pin_retries_left()?;
     let pin = Pin::new(ask_holder_for_pin(retries));
     let digest = Sha256::digest(b"document");
-    let signature = session.sign(&digest, DigestAlgorithm::Sha256, &signing.key, pin)?;
+    let signature = session.sign(&digest, DigestAlgorithm::Sha256, &signing, pin)?;
     Ok(())
 }
 ```
 
-`certificates` reads no certificate file: signing needs only the key. `session.certificate(label)` reads that one X.509 certificate on first request and keeps it for the session, and `Holder::from_der` reads the holder's data from it.
+`labels` and `private_key` read no certificate file: signing needs only the key. `session.certificate(label)` reads that one X.509 certificate on first request and keeps it for the session, and `Holder::from_der` reads the holder's data from it.
 
 ## The PIN
 
