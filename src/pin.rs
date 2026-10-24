@@ -48,17 +48,29 @@ const RETRIES_MASK: u8 = 0xF0;
 const RETRIES_TAG: u8 = 0xC0;
 const BLOCKED: StatusWord = StatusWord(0x6983);
 
-/// The never-blind PIN policy: the retries last shown are what the next verified operation expects.
+/// The counter's value after an accepted `VERIFY`.
+const MAX_RETRIES: u8 = 3;
+
+/// The never-blind PIN policy: the retries are the version of an optimistic lock, and `expected`
+/// is the one the caller read or the last PIN operation leaves known.
 pub(crate) struct PinGuard {
     authenticator: CardAuthenticator,
-    shown: Option<u8>,
+    expected: Option<u8>,
+}
+
+/// How far a verified operation got.
+#[derive(Clone, Copy)]
+enum Reached {
+    BeforeVerify,
+    VerifySent,
+    Accepted,
 }
 
 impl PinGuard {
     pub(crate) fn new(authenticator: CardAuthenticator) -> Self {
         Self {
             authenticator,
-            shown: None,
+            expected: None,
         }
     }
 
@@ -66,14 +78,18 @@ impl PinGuard {
         self.authenticator.key_generation()
     }
 
-    /// Reads the retries in their own transaction and records them as shown unless the read fails.
+    /// Reads the retries in their own transaction and expects what it read; a blocked PIN is 0.
     pub(crate) fn read_retries(&mut self, transport: &mut impl Transport) -> Result<u8, Error> {
-        let retries = self.query(transport)?;
-        self.shown = Some(retries);
-        Ok(retries)
+        let result = self.query(transport);
+        match result {
+            Ok(retries) => self.expected = Some(retries),
+            Err(Error::PinBlocked) => self.expected = Some(0),
+            Err(_) => {}
+        }
+        result
     }
 
-    /// Checks the retries shown, sends `pin` once and runs `work`, all in one transaction.
+    /// Checks the expected retries, sends `pin` once and runs `work`, all in one transaction.
     pub(crate) fn verified<R>(
         &mut self,
         transport: &mut impl Transport,
@@ -81,14 +97,15 @@ impl PinGuard {
         work: impl FnOnce(&mut SecureChannel<'_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
         pin.check_format()?;
-        let expected = match self.shown.take() {
-            Some(shown) => shown,
-            None => self.query(transport)?,
+        let expected = match self.expected {
+            Some(expected) => expected,
+            None => self.read_retries(transport)?,
         };
         if expected == 0 {
             return Err(Error::PinBlocked);
         }
         let authenticator = &self.authenticator;
+        let mut reached = Reached::BeforeVerify;
         let result = transport.transaction(|card| {
             let mut channel = authenticator.open_pin_channel(PlainChannel::new(card))?;
             match query_retries(&mut channel)? {
@@ -96,12 +113,18 @@ impl PinGuard {
                 retries if retries != expected => return Err(Error::PinRetriesChanged),
                 _ => {}
             }
+            reached = Reached::VerifySent;
             send_verify(&mut channel, pin)?;
+            reached = Reached::Accepted;
             work(&mut authenticator.open_user_channel(channel)?)
         });
-        if let Err(Error::WrongPin { retries_left }) = result {
-            self.shown = Some(retries_left);
-        }
+        self.expected = match (reached, &result) {
+            (Reached::Accepted, _) => Some(MAX_RETRIES),
+            (_, Err(Error::PinBlocked)) => Some(0),
+            (_, Err(Error::WrongPin { retries_left })) => Some(*retries_left),
+            (Reached::VerifySent, _) | (_, Err(Error::PinRetriesChanged)) => None,
+            (Reached::BeforeVerify, _) => self.expected,
+        };
         result
     }
 

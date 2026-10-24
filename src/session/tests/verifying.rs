@@ -81,13 +81,3 @@ fn reads_no_retries_in_a_separate_transaction_when_they_were_shown() {
     verify_with(&mut session, DEFAULT_PIN).unwrap();
     assert_eq!(pin_transactions_since(&session.transport, before).len(), 1);
 }
-
-#[test]
-fn a_following_sign_verifies_again_after_a_fallback_read() {
-    let mut session = open(signing_card());
-    verify_with(&mut session, DEFAULT_PIN).unwrap();
-    let before = session.transport.pin_queries().len();
-    sign_with(&mut session, &[0; 32], DigestAlgorithm::Sha256).unwrap();
-    assert_eq!(pin_transactions_since(&session.transport, before).len(), 2);
-    assert_eq!(attempts(&session.transport), 2);
-}
