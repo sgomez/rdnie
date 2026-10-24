@@ -58,6 +58,18 @@ fn refuses_other_cards() {
 }
 
 #[test]
+fn refuses_other_cards_ending_in_the_burned_status() {
+    assert!(matches!(
+        with_byte(DNIE_4_STM, 7, b'X').check(),
+        Err(Error::NotDnie)
+    ));
+    assert!(matches!(
+        with_byte(DNIE_4_STM, 0, 0x3F).check(),
+        Err(Error::NotDnie)
+    ));
+}
+
+#[test]
 fn refuses_inverse_convention() {
     assert!(matches!(
         with_byte(DNIE_3, 0, 0x3F).check(),
@@ -94,6 +106,22 @@ fn describes_burned_stmicroelectronics_dnie() {
         "DNIe ATR: 3B7F000000006A444E496520024C340102036581".to_owned()
             + "\n  Vpp (programming voltage): 0 (not required)\n  Extra guard time: 0 (not required)\n  Card name: DNIe\n  Match-on-Card maker: Siemens / Atos\n  Chip maker: STMicroelectronics\n  Chip type: 19WL34\n  OS version: 01.02\n  Life-cycle phase: user\n  State: volatile memory erased"
     );
+}
+
+#[test]
+fn names_each_life_cycle_phase() {
+    for (byte, phase) in [
+        (0x00, "pre-personalisation"),
+        (0x01, "personalisation"),
+        (0x03, "user"),
+        (0x0F, "final"),
+    ] {
+        assert!(
+            with_byte(DNIE_3, 17, byte)
+                .to_string()
+                .contains(&format!("Life-cycle phase: {phase}\n"))
+        );
+    }
 }
 
 #[test]
