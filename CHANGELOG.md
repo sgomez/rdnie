@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/sgomez/rdnie/compare/rdnie-v0.1.2...rdnie-v0.2.0) - 2026-10-24
+
+### Added
+
+- *(probe)* time the card steps and add a leftover-channel mode
+
+### Changed
+
+- *(deps)* [**breaking**] bump ctutils to 0.4.5 for RUSTSEC-2026-0385, raising the MSRV to 1.87
+- *(session)* [**breaking**] list certificates without their DER and read each on demand
+- *(session)* [**breaking**] open the session without resetting the card
+
+### Fixed
+
+- resend a plain command the card answers 69 87 after a leftover secure channel
+
 ## [0.1.2](https://github.com/sgomez/rdnie/compare/rdnie-v0.1.1...rdnie-v0.1.2) - 2026-10-22
 
 ### Fixed
