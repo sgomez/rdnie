@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeSet, fs, path::Path};
 
-use rdnie::{Error, Transport};
+use rdnie::{Error, Port, Transport};
 
 /// Keeps every command and the raw response the card gave it.
 pub struct Recorder<T> {
@@ -20,25 +20,31 @@ impl<T> Recorder<T> {
 }
 
 impl<T: Transport> Transport for Recorder<T> {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
-        let response = self.card.transmit_raw(apdu)?;
-        self.exchanges.push((apdu.to_vec(), response.clone()));
-        Ok(response)
-    }
-
     fn atr(&self) -> Result<Vec<u8>, Error> {
         self.card.atr()
     }
 
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        self.card.reset()
-    }
-
     fn transaction<R>(
         &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+        body: impl FnOnce(&mut dyn Port) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        body(self)
+        let exchanges = &mut self.exchanges;
+        self.card
+            .transaction(|port| body(&mut Recording { port, exchanges }))
+    }
+}
+
+/// The inner transport's port, keeping what passes through it.
+struct Recording<'a> {
+    port: &'a mut dyn Port,
+    exchanges: &'a mut Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+impl Port for Recording<'_> {
+    fn transmit(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        let response = self.port.transmit(apdu)?;
+        self.exchanges.push((apdu.to_vec(), response.clone()));
+        Ok(response)
     }
 }
 

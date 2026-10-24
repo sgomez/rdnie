@@ -4,19 +4,19 @@ use crate::{Error, standard_error_codes};
 
 /// ISO 7816-4 command in short format, the only one the DNIe uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Command {
+pub(crate) struct Command {
     /// Class byte.
-    pub cla: u8,
+    pub(crate) cla: u8,
     /// Instruction byte.
-    pub ins: u8,
+    pub(crate) ins: u8,
     /// First parameter.
-    pub p1: u8,
+    pub(crate) p1: u8,
     /// Second parameter.
-    pub p2: u8,
+    pub(crate) p2: u8,
     /// Command data.
-    pub data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     /// Expected response length; `Some(256)` encodes as `00`.
-    pub le: Option<u16>,
+    pub(crate) le: Option<u16>,
 }
 
 impl Command {
@@ -25,7 +25,7 @@ impl Command {
     /// # Errors
     ///
     /// [`Error::CommandTooLong`] if the data exceeds 255 bytes or `le` exceeds 256.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, Error> {
+    pub(crate) fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         let mut apdu = vec![self.cla, self.ins, self.p1, self.p2];
         if !self.data.is_empty() {
             let lc = u8::try_from(self.data.len())

@@ -1,10 +1,11 @@
 use super::{Location, fci_length, read, select_master_file};
 use crate::{
+    channel::PlainChannel,
     cwa14890,
     emulator::{DNIE_3_ATR, EmulatedDnie, component_root_public_key},
     key_sets::{ComponentRoots, R1_USER},
     session::tests::card_with_channel,
-    {Error, StatusWord, Transport},
+    {Error, Port, StatusWord, Transport},
 };
 
 const FILE: [u8; 2] = [0x60, 0x10];
@@ -12,11 +13,13 @@ const FILE: [u8; 2] = [0x60, 0x10];
 fn read_under_channel(card: EmulatedDnie) -> Vec<u8> {
     let mut card = card;
     let roots = ComponentRoots::only(component_root_public_key());
-    let mut channel = cwa14890::open(&mut card, &R1_USER, &roots).unwrap();
-    read(
-        &mut channel,
-        &Location::new(&[0x3F, 0x00, 0x60, 0x10]).unwrap(),
-    )
+    card.transaction(|port| {
+        let mut channel = cwa14890::open(PlainChannel::new(port), &R1_USER, &roots)?;
+        read(
+            &mut channel,
+            &Location::new(&[0x3F, 0x00, 0x60, 0x10]).unwrap(),
+        )
+    })
     .unwrap()
 }
 
@@ -41,7 +44,10 @@ fn drops_data_a_secure_channel_did_not_authenticate() {
 #[test]
 fn selects_the_master_file_whatever_a_card_answers_with_9000() {
     let mut card = EmulatedDnie::new(&DNIE_3_ATR).answering_master_file_selection_with(&[1, 2, 3]);
-    assert!(select_master_file(&mut card).is_ok());
+    assert!(
+        card.transaction(|port| select_master_file(&mut PlainChannel::new(port)))
+            .is_ok()
+    );
 }
 
 struct PlainFile {
@@ -63,8 +69,8 @@ impl PlainFile {
     }
 }
 
-impl Transport for PlainFile {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+impl Port for PlainFile {
+    fn transmit(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         let ok = [0x90, 0x00];
         match apdu[1] {
             0xA4 if apdu[2] == 0x04 => Ok(ok.to_vec()),
@@ -86,24 +92,6 @@ impl Transport for PlainFile {
                 Ok([&self.content[offset..end], &ok].concat())
             }
         }
-    }
-
-    fn atr(&self) -> Result<Vec<u8>, Error> {
-        unreachable!()
-    }
-
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        unreachable!()
-    }
-
-    fn transaction<R>(
-        &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
-    ) -> Result<R, Error>
-    where
-        Self: Sized,
-    {
-        body(self)
     }
 }
 
@@ -150,7 +138,7 @@ fn accepts_an_fci_of_three_bytes() {
 fn reports_a_card_error_in_the_middle_of_a_read_as_that_status() {
     let mut card = PlainFile::new(vec![7; 500]);
     card.failing_read = Some((2, 0x6700));
-    let error = read(&mut card, &location()).unwrap_err();
+    let error = read(&mut PlainChannel::new(&mut card), &location()).unwrap_err();
     assert!(matches!(error, Error::Status(StatusWord(0x6700))));
 }
 
@@ -158,7 +146,10 @@ fn reports_a_card_error_in_the_middle_of_a_read_as_that_status() {
 fn reads_a_file_longer_than_one_chunk_in_full_and_in_order() {
     let content: Vec<u8> = (0..=255).cycle().take(500).collect();
     let mut card = PlainFile::new(content.clone());
-    assert_eq!(read(&mut card, &location()).unwrap(), content);
+    assert_eq!(
+        read(&mut PlainChannel::new(&mut card), &location()).unwrap(),
+        content
+    );
     assert_eq!(
         card.reads,
         [(0x00, 0x00, 0xDE), (0x00, 0xDE, 0xDE), (0x01, 0xBC, 0x38)]
@@ -211,6 +202,9 @@ fn reads_an_81_length_whose_value_ends_the_fci() {
 fn sends_no_read_binary_at_an_offset_equal_to_the_file_length() {
     let content = vec![7; 2 * 0xDE];
     let mut card = PlainFile::new(content.clone());
-    assert_eq!(read(&mut card, &location()).unwrap(), content);
+    assert_eq!(
+        read(&mut PlainChannel::new(&mut card), &location()).unwrap(),
+        content
+    );
     assert_eq!(card.reads, [(0x00, 0x00, 0xDE), (0x00, 0xDE, 0xDE)]);
 }

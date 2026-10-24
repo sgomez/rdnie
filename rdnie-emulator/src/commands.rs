@@ -256,7 +256,6 @@ impl EmulatedDnie {
             Delivery::ExactLe if le == Some(data.len()) => with_status(data, 0x9000),
             Delivery::ExactLe => vec![0x6C, length_byte(data.len())],
             Delivery::EndlessPending => vec![0x61, 0x05],
-            Delivery::EndlessWrongLength => vec![0x6C, 0x05],
         }
     }
 
@@ -290,8 +289,22 @@ impl EmulatedDnie {
     }
 }
 
-impl Transport for EmulatedDnie {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+impl EmulatedDnie {
+    /// Resets the card and returns its ATR, as a reader's reset would.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::CardRemoved`] if the card left the reader.
+    pub fn reset(&mut self) -> Result<Vec<u8>, Error> {
+        if self.presence == Presence::Removed {
+            return Err(Error::CardRemoved);
+        }
+        self.resets += 1;
+        self.power_cycle();
+        Ok(self.atr.clone())
+    }
+
+    fn receive(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
         }
@@ -346,7 +359,18 @@ impl Transport for EmulatedDnie {
         }
         Ok(self.answer(&apdu))
     }
+}
 
+/// The emulated card while a transaction holds it.
+struct InTransaction<'card>(&'card mut EmulatedDnie);
+
+impl Port for InTransaction<'_> {
+    fn transmit(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        self.0.receive(apdu)
+    }
+}
+
+impl Transport for EmulatedDnie {
     fn atr(&self) -> Result<Vec<u8>, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
@@ -354,18 +378,9 @@ impl Transport for EmulatedDnie {
         Ok(self.atr.clone())
     }
 
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        if self.presence == Presence::Removed {
-            return Err(Error::CardRemoved);
-        }
-        self.resets += 1;
-        self.power_cycle();
-        Ok(self.atr.clone())
-    }
-
     fn transaction<R>(
         &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+        body: impl FnOnce(&mut dyn Port) -> Result<R, Error>,
     ) -> Result<R, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
@@ -375,7 +390,7 @@ impl Transport for EmulatedDnie {
             self.retry_lost_between_transactions = false;
             self.retries = self.retries.saturating_sub(1);
         }
-        body(self)
+        body(&mut InTransaction(self))
     }
 }
 

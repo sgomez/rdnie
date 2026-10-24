@@ -15,6 +15,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - *(session)* `sign` reports a wrong digest length before an invalid PIN format
 - *(session)* after `WrongPin { retries_left }`, the next `sign` or `verify_pin` expects `retries_left` instead of reading the retries again
 - *(session)* `certificate` reports a certificate file that is not X.509 as `MalformedCertificate`
+- *(transport)* [**breaking**] split `Transport` into `Transport` and `Port`
+
+  `Transport` now has `atr` and `transaction`, whose body receives `&mut dyn Port`; `Port` has one method, `transmit`. `transmit_raw` and `reset` leave the trait (`reset` stays an inherent method of `PcscTransport` and the emulated DNIe), and `Command` is crate-private.
+
+  To migrate an adapter, implement `atr` and `transaction`, and hand the body a private `Port` that sends the bytes. A decorator forwards the inner transaction and wraps the port it receives:
+
+  ```rust
+  fn transaction<R>(
+      &mut self,
+      body: impl FnOnce(&mut dyn Port) -> Result<R, Error>,
+  ) -> Result<R, Error> {
+      let log = &mut self.log;
+      self.inner.transaction(|port| body(&mut Recording { port, log }))
+  }
+  ```
+
+  where `Recording` implements `Port::transmit` by logging the APDU and calling `port.transmit`.
 
 ## [0.2.0](https://github.com/sgomez/rdnie/compare/rdnie-v0.1.2...rdnie-v0.2.0) - 2026-10-24
 

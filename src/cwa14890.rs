@@ -18,7 +18,8 @@ use x509_cert::{
 use zeroize::Zeroize;
 
 use crate::{
-    Command, Error, Transport,
+    Command, Error,
+    channel::{CommandChannel, PlainChannel},
     files::{self, Location},
     key_sets::{CA_PUBLIC_KEY_REFERENCE, ComponentRoots, ICC_PRIVATE_KEY_REFERENCE, KeySet},
     secure_messaging::{SecureChannel, SecureMessaging},
@@ -55,11 +56,11 @@ const RANDOM_FAILED: Error = Error::SecureChannel("the OS random generator faile
 
 /// Authenticates card and terminal with `keys` and returns the channel they agree on over `card`.
 pub(crate) fn open<'a>(
-    card: &'a mut dyn Transport,
+    mut card: PlainChannel<'a>,
     keys: &KeySet,
     roots: &ComponentRoots,
 ) -> Result<SecureChannel<'a>, Error> {
-    let state = handshake(card, keys, roots)?;
+    let state = handshake(&mut card, keys, roots)?;
     Ok(SecureChannel::new(state, card))
 }
 
@@ -73,7 +74,7 @@ pub(crate) fn open_inside<'a>(
 }
 
 fn handshake(
-    card: &mut dyn Transport,
+    card: &mut dyn CommandChannel,
     keys: &KeySet,
     roots: &ComponentRoots,
 ) -> Result<SecureMessaging, Error> {
@@ -93,7 +94,7 @@ fn handshake(
 }
 
 /// The chip serial from `GET CHIP INFO`, left-padded to 8 bytes.
-fn padded_serial(card: &mut dyn Transport) -> Result<Vec<u8>, Error> {
+fn padded_serial(card: &mut dyn CommandChannel) -> Result<Vec<u8>, Error> {
     let serial = send(card, 0x90, 0xB8, 0x00, 0x00, vec![], Some(7))?;
     let mut padded = vec![0; SERIAL_LENGTH.saturating_sub(serial.len())];
     padded.extend(serial);
@@ -102,7 +103,10 @@ fn padded_serial(card: &mut dyn Transport) -> Result<Vec<u8>, Error> {
 
 /// The public key of the X.509 component certificate, once its chain checks out as
 /// `cwa_verify_icc_certificates` of `OpenSC` checks it, ending in any of `roots`.
-fn icc_public_key(card: &mut dyn Transport, roots: &ComponentRoots) -> Result<RsaPublicKey, Error> {
+fn icc_public_key(
+    card: &mut dyn CommandChannel,
+    roots: &ComponentRoots,
+) -> Result<RsaPublicKey, Error> {
     let ca = read_certificate(card, COMPONENT_CA_CERTIFICATE)?;
     let icc = read_certificate(card, ICC_CERTIFICATE)?;
     if !roots.iter().any(|root| ca.is_signed_by(root)) {
@@ -127,7 +131,10 @@ struct StoredCertificate {
 }
 
 /// Reads the certificate at `path`; any data after it is ignored.
-fn read_certificate(card: &mut dyn Transport, path: &[u8]) -> Result<StoredCertificate, Error> {
+fn read_certificate(
+    card: &mut dyn CommandChannel,
+    path: &[u8],
+) -> Result<StoredCertificate, Error> {
     let location = Location::new(path).ok_or(MALFORMED_CERTIFICATE)?;
     let encoded = files::read(card, &location).map_err(|error| match error {
         Error::Status(_) => Error::SecureChannel("the component certificate chain is missing"),
@@ -204,14 +211,17 @@ impl StoredCertificate {
 }
 
 /// Lets the card verify the CA CVC against its root key, then the terminal CVC against the CA.
-fn verify_ifd_certificate_chain(card: &mut dyn Transport, keys: &KeySet) -> Result<(), Error> {
+fn verify_ifd_certificate_chain(card: &mut dyn CommandChannel, keys: &KeySet) -> Result<(), Error> {
     set_public_key_to_verification(card, &CA_PUBLIC_KEY_REFERENCE)?;
     verify_certificate(card, keys.ca_cvc)?;
     set_public_key_to_verification(card, &keys.ca_chr)?;
     verify_certificate(card, keys.terminal_cvc)
 }
 
-fn set_public_key_to_verification(card: &mut dyn Transport, reference: &[u8]) -> Result<(), Error> {
+fn set_public_key_to_verification(
+    card: &mut dyn CommandChannel,
+    reference: &[u8],
+) -> Result<(), Error> {
     send(card, 0x00, MSE_SET, 0x81, 0xB6, tlv(0x83, reference), None)
         .map_err(|error| {
             refusal(
@@ -222,7 +232,7 @@ fn set_public_key_to_verification(card: &mut dyn Transport, reference: &[u8]) ->
         .map(drop)
 }
 
-fn verify_certificate(card: &mut dyn Transport, cvc: &[u8]) -> Result<(), Error> {
+fn verify_certificate(card: &mut dyn CommandChannel, cvc: &[u8]) -> Result<(), Error> {
     send(card, 0x00, 0x2A, 0x00, 0xAE, cvc.to_vec(), None)
         .map_err(|error| refusal(error, "the card refused to verify the terminal certificate"))
         .map(drop)
@@ -237,7 +247,7 @@ fn refusal(error: Error, reason: &'static str) -> Error {
 
 /// Selects the terminal and ICC keys, has the card sign `RND.IFD ‖ CHR` and returns `Kicc`.
 fn internal_authentication(
-    card: &mut dyn Transport,
+    card: &mut dyn CommandChannel,
     keys: &KeySet,
     rnd_ifd: [u8; CHALLENGE_LENGTH],
     icc_key: &RsaPublicKey,
@@ -291,7 +301,7 @@ fn validate_internal_authentication(
     Ok(kicc)
 }
 
-fn challenge(card: &mut dyn Transport) -> Result<[u8; CHALLENGE_LENGTH], Error> {
+fn challenge(card: &mut dyn CommandChannel) -> Result<[u8; CHALLENGE_LENGTH], Error> {
     send(card, 0x00, 0x84, 0x00, 0x00, vec![], Some(8))?
         .try_into()
         .map_err(|_| Error::SecureChannel("the card challenge is not 8 bytes long"))
@@ -300,7 +310,7 @@ fn challenge(card: &mut dyn Transport) -> Result<[u8; CHALLENGE_LENGTH], Error> 
 /// Sends `min(SIG, N.IFD − SIG)` of `6A ‖ PRND2 ‖ Kifd ‖ SHA-1(PRND2 ‖ Kifd ‖ RND.ICC ‖ SN.ICC) ‖ BC`
 /// encrypted for the card, and returns `Kifd`.
 fn external_authentication(
-    card: &mut dyn Transport,
+    card: &mut dyn CommandChannel,
     keys: &KeySet,
     serial: &[u8],
     rnd_icc: [u8; CHALLENGE_LENGTH],
@@ -361,7 +371,7 @@ fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
 
 /// Sends a plain command and returns its data if the card accepts it.
 fn send(
-    card: &mut dyn Transport,
+    card: &mut dyn CommandChannel,
     cla: u8,
     ins: u8,
     p1: u8,

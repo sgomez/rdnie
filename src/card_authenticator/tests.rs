@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    Command, StatusWord,
+    Command, StatusWord, Transport,
     emulator::{DEFAULT_PIN, EmulatedDnie, component_root_public_key},
     session::tests::card_accepting,
 };
@@ -62,15 +62,14 @@ fn resolves_the_idesp_into_a_key_generation() {
 #[test]
 fn opens_the_pin_channel_with_the_pin_keys_of_its_generation() {
     for generation in GENERATIONS {
-        let mut card = card_of(generation);
-        let mut channel = authenticator(generation)
-            .open_pin_channel(&mut card)
+        let status = card_of(generation)
+            .transaction(|port| {
+                let mut channel =
+                    authenticator(generation).open_pin_channel(PlainChannel::new(port))?;
+                Ok(verify_status(&mut channel))
+            })
             .unwrap();
-        assert_eq!(
-            verify_status(&mut channel),
-            StatusWord::SUCCESS,
-            "{generation:?}"
-        );
+        assert_eq!(status, StatusWord::SUCCESS, "{generation:?}");
     }
 }
 
@@ -79,13 +78,14 @@ fn opens_the_user_channel_inside_the_pin_channel_with_the_user_keys_of_its_gener
     for generation in GENERATIONS {
         let mut card = card_of(generation);
         let authenticator = authenticator(generation);
-        let pin_channel = authenticator.open_pin_channel(&mut card).unwrap();
-        let mut user_channel = authenticator.open_user_channel(pin_channel).unwrap();
-        assert_eq!(
-            verify_status(&mut user_channel),
-            SECURITY_STATUS_NOT_SATISFIED,
-            "{generation:?}"
-        );
+        let status = card
+            .transaction(|port| {
+                let pin_channel = authenticator.open_pin_channel(PlainChannel::new(port))?;
+                let mut user_channel = authenticator.open_user_channel(pin_channel)?;
+                Ok(verify_status(&mut user_channel))
+            })
+            .unwrap();
+        assert_eq!(status, SECURITY_STATUS_NOT_SATISFIED, "{generation:?}");
         let [pin, user] = card.handshakes() else {
             panic!("expected two handshakes, got {}", card.handshakes().len());
         };
@@ -97,12 +97,11 @@ fn opens_the_user_channel_inside_the_pin_channel_with_the_user_keys_of_its_gener
 #[test]
 fn refuses_a_card_of_the_other_generation() {
     for [generation, other] in [GENERATIONS, [GENERATIONS[1], GENERATIONS[0]]] {
-        let mut card = card_of(other);
-        assert!(
+        let opened = card_of(other).transaction(|port| {
             authenticator(generation)
-                .open_pin_channel(&mut card)
-                .is_err(),
-            "{generation:?}"
-        );
+                .open_pin_channel(PlainChannel::new(port))
+                .map(drop)
+        });
+        assert!(opened.is_err(), "{generation:?}");
     }
 }

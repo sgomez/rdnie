@@ -2,7 +2,9 @@
 
 //! Signing a caller's digest in the user channel, as `Dnie.signOperation` does.
 
-use crate::{Command, Error, KeyReference, Transport, secure_messaging::SecureChannel};
+use crate::{
+    Command, Error, KeyReference, channel::CommandChannel, secure_messaging::SecureChannel,
+};
 
 const SHA256_HEADER: &[u8] = &[
     0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,

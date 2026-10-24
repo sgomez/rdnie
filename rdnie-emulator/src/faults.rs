@@ -29,8 +29,6 @@ pub enum Delivery {
     ExactLe,
     /// Answers `61xx` to the command and to every `GET RESPONSE`.
     EndlessPending,
-    /// Answers `6Cxx` to every command, whatever its Le.
-    EndlessWrongLength,
 }
 
 /// A step of the handshake the card fails.
@@ -149,7 +147,12 @@ impl EmulatedDnie {
         self.commands
     }
 
-    /// Times the card was asked to reset through [`Transport::reset`].
+    /// Transactions the card ran.
+    pub fn transactions(&self) -> usize {
+        self.transactions
+    }
+
+    /// Times the card was asked to reset through [`EmulatedDnie::reset`].
     pub fn resets(&self) -> usize {
         self.resets
     }
