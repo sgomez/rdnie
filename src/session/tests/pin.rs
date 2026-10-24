@@ -228,7 +228,7 @@ fn reports_a_blocked_pin_when_the_reread_finds_no_retry_left() {
 }
 
 /// The transactions the card's `VERIFY`s arrived in, from the `from`th on.
-fn pin_transactions_since(card: &EmulatedDnie, from: usize) -> Vec<usize> {
+pub(super) fn pin_transactions_since(card: &EmulatedDnie, from: usize) -> Vec<usize> {
     let mut transactions: Vec<usize> = card.pin_queries()[from..]
         .iter()
         .map(|query| query.transaction)

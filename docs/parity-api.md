@@ -12,7 +12,7 @@ JMulticard `4ec9494` against rdnie `c179c86`. Java paths are relative to `jmulti
 | `CryptoCard.getPrivateKey` | `Certificate::key` | Changed |
 | `CryptoCard.sign` | `Session::sign` | Changed |
 | `Dnie3.getPinRetriesLeft` | `Session::pin_retries` | Changed |
-| `Dnie3.openSecureChannelIfNotAlreadyOpened(true)` | — | Gap |
+| `Dnie3.openSecureChannelIfNotAlreadyOpened(true)` | `Session::verify_pin` | Changed |
 | `Dnie.verifyPin` | — | Not ported |
 | `Dnie.getSerialNumber` | — | Gap |
 | `Dnie.getCardName` | — | Gap |
@@ -46,10 +46,6 @@ JMulticard `4ec9494` against rdnie `c179c86`. Java paths are relative to `jmulti
 | — | `is_dnie` | New |
 
 ## Gaps
-
-### `Dnie3.openSecureChannelIfNotAlreadyOpened(true)`
-
-Called on its own, it verifies the PIN without signing and keeps the channel for the next `sign`. rdnie has no such operation: VERIFY happens only inside `Session::sign`. Lost as a side effect of opening a channel per operation (parity.md:61). rFirma works around it with a discarded signature. Planned as `Session::verify_pin`.
 
 ### `Dnie.getSerialNumber`
 
@@ -91,6 +87,10 @@ Returned with the certificate. The fields are opaque; no recorded reason.
 ### `Dnie3.getPinRetriesLeft` → `Session::pin_retries`
 
 Opens its own PIN channel. Java needs an open channel and leaves the card in the PIN channel (parity.md:87).
+
+### `Dnie3.openSecureChannelIfNotAlreadyOpened(true)` → `Session::verify_pin`
+
+Verifies the PIN without signing, as Java's open-with-PIN does, but the channel is not kept: the next `sign` verifies again in its own transaction (parity.md:61). Same retries policy as `sign`.
 
 ### `Dnie.setCallbackHandler`, `setPasswordCallback`, password callbacks → `Pin`, `Session::pin_retries`
 
