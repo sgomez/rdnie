@@ -89,6 +89,58 @@ fn fails_to_open_on_any_idesp_failure_but_an_absent_file() {
     ));
 }
 
+#[test]
+fn gives_the_idesp_it_read_without_touching_the_card() {
+    let session = open(card_with_channel().with_idesp(b"BMP100001"));
+    let (transactions, commands) = (
+        session.transport.transactions(),
+        session.transport.commands(),
+    );
+    assert_eq!(session.idesp(), Some("BMP100001"));
+    assert_eq!(session.transport.transactions(), transactions);
+    assert_eq!(session.transport.commands(), commands);
+}
+
+#[test]
+fn gives_no_idesp_for_a_card_without_one() {
+    let session = Session::open(EmulatedDnie::new(&DNIE_3_ATR)).unwrap();
+    assert_eq!(session.idesp(), None);
+}
+
+#[test]
+fn names_dnie_3_and_4_alike_without_touching_the_card() {
+    for atr in [DNIE_3_ATR, DNIE_4_ATR] {
+        let session = Session::open(EmulatedDnie::new(&atr)).unwrap();
+        let commands = session.transport.commands();
+        assert_eq!(session.card_name(), "DNIe 3.0/4.0");
+        assert_eq!(session.transport.commands(), commands);
+    }
+}
+
+#[test]
+fn reads_the_serial_number_unpadded_in_one_transaction() {
+    let mut session = open(card_with_channel());
+    let (transactions, commands) = (
+        session.transport.transactions(),
+        session.transport.commands(),
+    );
+    assert_eq!(
+        session.serial_number().unwrap(),
+        [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16]
+    );
+    assert_eq!(session.transport.transactions(), transactions + 1);
+    assert_eq!(session.transport.commands(), commands + 1);
+}
+
+#[test]
+fn fails_the_serial_number_with_the_refusal_status() {
+    let mut session = open(card_with_channel().failing(HandshakeFault::RefusingChipInfo));
+    assert!(matches!(
+        session.serial_number(),
+        Err(Error::Status(StatusWord(0x6985)))
+    ));
+}
+
 /// Answers `atr()` with its own ATR, whatever the card resets to.
 struct Showing(Vec<u8>, EmulatedDnie);
 
