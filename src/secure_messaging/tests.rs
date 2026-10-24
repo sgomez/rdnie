@@ -430,7 +430,9 @@ fn runs_a_transaction_on_the_channel_itself() {
     let status = channel
         .transaction(|inside| Ok(inside.transmit(&select(b"Master.File".to_vec()))?.status))
         .unwrap();
+    drop(channel);
     assert_eq!(status, StatusWord::SUCCESS);
+    assert_eq!(card.sent[0][0], 0x0C);
 }
 
 #[test]
