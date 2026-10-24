@@ -57,12 +57,14 @@ impl fmt::Debug for KeyReference {
 
 /// The CDF's certificates, each with its label and file path.
 pub(crate) fn cdf(card: &mut dyn Transport) -> Result<Vec<pkcs15::Entry>, Error> {
-    pkcs15::entries(&files::read(card, &location(CDF)?)?, true)
+    let location = Location::new(CDF).expect("the CDF path is valid");
+    pkcs15::entries(&files::read(card, &location)?, true)
 }
 
 /// The PrKDF's keys, each with its file path.
 pub(crate) fn prkdf(card: &mut dyn Transport) -> Result<Vec<pkcs15::Entry>, Error> {
-    pkcs15::entries(&files::read(card, &location(PRKDF)?)?, false)
+    let location = Location::new(PRKDF).expect("the PrKDF path is valid");
+    pkcs15::entries(&files::read(card, &location)?, false)
 }
 
 /// The CDF certificates the PrKDF has a key for, each paired with it by identifier.
