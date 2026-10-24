@@ -5,7 +5,9 @@
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    Command, Error, KeyGeneration, StatusWord, Transport, card_authenticator::CardAuthenticator,
+    Command, Error, KeyGeneration, StatusWord, Transport,
+    card_authenticator::CardAuthenticator,
+    channel::{CommandChannel, PlainChannel},
     secure_messaging::SecureChannel,
 };
 
@@ -88,7 +90,7 @@ impl PinGuard {
         }
         let authenticator = &self.authenticator;
         let result = transport.transaction(|card| {
-            let mut channel = authenticator.open_pin_channel(card)?;
+            let mut channel = authenticator.open_pin_channel(PlainChannel::new(card))?;
             match query_retries(&mut channel)? {
                 0 => return Err(Error::PinBlocked),
                 retries if retries != expected => return Err(Error::PinRetriesChanged),
@@ -104,7 +106,13 @@ impl PinGuard {
     }
 
     fn query(&self, transport: &mut impl Transport) -> Result<u8, Error> {
-        transport.transaction(|card| query_retries(&mut self.authenticator.open_pin_channel(card)?))
+        transport.transaction(|card| {
+            query_retries(
+                &mut self
+                    .authenticator
+                    .open_pin_channel(PlainChannel::new(card))?,
+            )
+        })
     }
 }
 

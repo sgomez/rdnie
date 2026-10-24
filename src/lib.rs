@@ -8,6 +8,7 @@ mod apdu;
 mod atr;
 mod card_authenticator;
 mod certificates;
+mod channel;
 mod cwa14890;
 #[cfg(test)]
 #[path = "../rdnie-emulator/src/lib.rs"]

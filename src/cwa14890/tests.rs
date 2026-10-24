@@ -16,6 +16,7 @@ use sha1::{Digest, Sha1};
 use super::{check_answers, external_authentication, validate_internal_authentication};
 use crate::{
     Error, Session, Transport,
+    channel::PlainChannel,
     emulator::{
         EmulatedDnie, HandshakeFault, component_certificate, component_root_public_key,
         foreign_root_public_key, intermediate_certificate,
@@ -272,8 +273,14 @@ fn sends_the_smaller_of_the_signature_and_its_complement_to_the_card() {
     // Each handshake draws a fresh frame, so half of them sign above N.IFD / 2.
     for _ in 0..16 {
         let mut card = AcceptingCard(vec![]);
-        external_authentication(&mut card, keys, &[0x01; 8], [0x02; 8], &icc.to_public_key())
-            .unwrap();
+        external_authentication(
+            &mut PlainChannel::new(&mut card),
+            keys,
+            &[0x01; 8],
+            [0x02; 8],
+            &icc.to_public_key(),
+        )
+        .unwrap();
         let apdu = &card.0[0];
         let token = BigUint::from_bytes_be(&apdu[5..5 + usize::from(apdu[4])]);
         let sent = rsa_decrypt_and_check(&icc, Some(&mut OsRng), &token).unwrap();

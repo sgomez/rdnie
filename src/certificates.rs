@@ -8,7 +8,8 @@ use der::{Decode, Reader, SliceReader};
 use flate2::{Decompress, FlushDecompress, Status};
 
 use crate::{
-    Error, Transport,
+    Error,
+    channel::CommandChannel,
     files::{self, Location},
     pkcs15,
 };
@@ -56,13 +57,13 @@ impl fmt::Debug for KeyReference {
 }
 
 /// The CDF's certificates, each with its label and file path.
-pub(crate) fn cdf(card: &mut dyn Transport) -> Result<Vec<pkcs15::Entry>, Error> {
+pub(crate) fn cdf(card: &mut dyn CommandChannel) -> Result<Vec<pkcs15::Entry>, Error> {
     let location = Location::new(CDF).expect("the CDF path is valid");
     pkcs15::entries(&files::read(card, &location)?, true)
 }
 
 /// The PrKDF's keys, each with its file path.
-pub(crate) fn prkdf(card: &mut dyn Transport) -> Result<Vec<pkcs15::Entry>, Error> {
+pub(crate) fn prkdf(card: &mut dyn CommandChannel) -> Result<Vec<pkcs15::Entry>, Error> {
     let location = Location::new(PRKDF).expect("the PrKDF path is valid");
     pkcs15::entries(&files::read(card, &location)?, false)
 }
@@ -91,7 +92,7 @@ pub(crate) fn keyed(
 }
 
 /// The X.509 certificate stored in the file of `entry`.
-pub(crate) fn read(card: &mut dyn Transport, entry: &pkcs15::Entry) -> Result<Vec<u8>, Error> {
+pub(crate) fn read(card: &mut dyn CommandChannel, entry: &pkcs15::Entry) -> Result<Vec<u8>, Error> {
     stored_x509(files::read(card, &location(&entry.path)?)?)
 }
 

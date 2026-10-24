@@ -64,7 +64,7 @@ fn opens_the_pin_channel_with_the_pin_keys_of_its_generation() {
     for generation in GENERATIONS {
         let mut card = card_of(generation);
         let mut channel = authenticator(generation)
-            .open_pin_channel(&mut card)
+            .open_pin_channel(PlainChannel::new(&mut card))
             .unwrap();
         assert_eq!(
             verify_status(&mut channel),
@@ -79,7 +79,9 @@ fn opens_the_user_channel_inside_the_pin_channel_with_the_user_keys_of_its_gener
     for generation in GENERATIONS {
         let mut card = card_of(generation);
         let authenticator = authenticator(generation);
-        let pin_channel = authenticator.open_pin_channel(&mut card).unwrap();
+        let pin_channel = authenticator
+            .open_pin_channel(PlainChannel::new(&mut card))
+            .unwrap();
         let mut user_channel = authenticator.open_user_channel(pin_channel).unwrap();
         assert_eq!(
             verify_status(&mut user_channel),
@@ -100,7 +102,7 @@ fn refuses_a_card_of_the_other_generation() {
         let mut card = card_of(other);
         assert!(
             authenticator(generation)
-                .open_pin_channel(&mut card)
+                .open_pin_channel(PlainChannel::new(&mut card))
                 .is_err(),
             "{generation:?}"
         );
