@@ -4,7 +4,7 @@ set -euo pipefail
 
 MAX_TOKENS=5000
 
-# Not written by agents: lockfiles, the license, vendored skills and research records.
+# Not code: lockfiles, the license, vendored skills and docs.
 EXCLUDE_PATTERNS=(
   "Cargo.lock"
   "fuzz/Cargo.lock"
@@ -12,7 +12,7 @@ EXCLUDE_PATTERNS=(
   "LICENSE"
   ".agents/skills/*"
   ".claude/skills/*"
-  "docs/research/*"
+  "docs/*"
 )
 
 file_list() {
