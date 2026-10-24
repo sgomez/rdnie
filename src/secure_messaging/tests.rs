@@ -248,7 +248,7 @@ impl Transport for ScriptedCard {
     }
 
     fn atr(&self) -> Result<Vec<u8>, Error> {
-        unreachable!("the codec never reads the atr")
+        Ok(vec![0x3B, 0x7F])
     }
 
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
@@ -386,6 +386,20 @@ fn refuses_raw_apdus_and_resets_inside_a_channel() {
     ));
     assert!(matches!(protected.reset(), Err(Error::Transport(_))));
     assert_eq!(card.sent.len(), 0);
+}
+
+#[test]
+fn reads_the_atr_of_the_card_beneath_a_channel() {
+    let mut channel = SecureMessaging::fixed();
+    let mut card = ScriptedCard {
+        responses: vec![],
+        sent: vec![],
+    };
+    let protected = Protected {
+        channel: &mut channel,
+        card: &mut card,
+    };
+    assert_eq!(protected.atr().unwrap(), [0x3B, 0x7F]);
 }
 
 #[test]
