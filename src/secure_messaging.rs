@@ -62,10 +62,7 @@ use retail_mac::{KeyInit, Mac, RetailMac};
 use sha1::{Digest, Sha1};
 use zeroize::Zeroize;
 
-use crate::{
-    Command, Error, Response, StatusWord, Transport,
-    transport::{MAX_RESENDS, WRONG_LENGTH, short_le},
-};
+use crate::{Command, Error, Response, StatusWord, Transport, resend::Resends};
 
 const BLOCK: usize = 8;
 const PROTECTED_CLA: u8 = 0x0C;
@@ -135,50 +132,6 @@ impl SecureMessaging {
             data: body,
             le: None,
         })
-    }
-
-    /// Sends a command through the channel and returns the card's plain answer, resending it with
-    /// the Le of a `6Cxx` at most 2 times in a row; past that, [`Error::Status`] with the last one.
-    pub(crate) fn transmit<T: Transport + ?Sized>(
-        &mut self,
-        transport: &mut T,
-        command: &Command,
-    ) -> Result<Response, Error> {
-        let mut resent = None;
-        let result = self.follow(transport, command, &mut resent);
-        if let Some(mut copy) = resent {
-            copy.data.zeroize();
-        }
-        result
-    }
-
-    /// Keeps the latest resent copy in `resent`, so the caller wipes it on every exit.
-    fn follow<T: Transport + ?Sized>(
-        &mut self,
-        transport: &mut T,
-        command: &Command,
-        resent: &mut Option<Command>,
-    ) -> Result<Response, Error> {
-        let mut resends = 0;
-        loop {
-            let sent = resent.as_ref().unwrap_or(command);
-            let protected = self.protect(sent)?;
-            let response = self.unprotect(&transport.transmit(&protected)?)?;
-            let [WRONG_LENGTH, le] = response.status.0.to_be_bytes() else {
-                return Ok(response);
-            };
-            if resends == MAX_RESENDS {
-                return Err(Error::Status(response.status));
-            }
-            resends += 1;
-            let next = Command {
-                le: Some(short_le(le)),
-                ..sent.clone()
-            };
-            if let Some(mut old) = resent.replace(next) {
-                old.data.zeroize();
-            }
-        }
     }
 
     /// Checks and decrypts `[87] 99 8E` as JMulticard, incrementing the SSC first; bytes after `8E` are ignored.
@@ -285,13 +238,29 @@ impl SecureMessaging {
     }
 }
 
-/// A transport whose commands all travel through `channel`, as a channel opened inside another.
-pub(crate) struct Protected<'a> {
-    pub(crate) channel: &'a mut SecureMessaging,
-    pub(crate) card: &'a mut dyn Transport,
+/// An open secure channel bound to the card it runs over: the only way protected commands are sent.
+pub(crate) struct SecureChannel<'a> {
+    state: SecureMessaging,
+    card: &'a mut dyn Transport,
 }
 
-impl Transport for Protected<'_> {
+impl<'a> SecureChannel<'a> {
+    pub(crate) fn new(state: SecureMessaging, card: &'a mut dyn Transport) -> Self {
+        Self { state, card }
+    }
+
+    /// Negotiates a channel through this one with `handshake`, then binds it to the card beneath
+    /// and drops this one.
+    pub(crate) fn open_inside(
+        mut self,
+        handshake: impl FnOnce(&mut dyn Transport) -> Result<SecureMessaging, Error>,
+    ) -> Result<Self, Error> {
+        let state = handshake(&mut self)?;
+        Ok(Self::new(state, self.card))
+    }
+}
+
+impl Transport for SecureChannel<'_> {
     fn transmit_raw(&mut self, _apdu: &[u8]) -> Result<Vec<u8>, Error> {
         Err(Error::Transport(
             "raw apdus cannot cross a secure channel".into(),
@@ -315,8 +284,18 @@ impl Transport for Protected<'_> {
         body(self)
     }
 
+    /// Protects `command` and returns the card's plain answer, resending it with the Le of a `6Cxx`
+    /// at most 2 times in a row; past that, [`Error::Status`] with the last one.
     fn transmit(&mut self, command: &Command) -> Result<Response, Error> {
-        self.channel.transmit(self.card, command)
+        let mut resends = Resends::default();
+        loop {
+            let protected = self.state.protect(resends.current(command))?;
+            let response = self.state.unprotect(&self.card.transmit(&protected)?)?;
+            if !Resends::is_wrong_length(response.status) {
+                return Ok(response);
+            }
+            resends.resend_with_le(command, response.status)?;
+        }
     }
 }
 

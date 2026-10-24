@@ -3,7 +3,6 @@ use crate::{
     cwa14890,
     emulator::{DNIE_3_ATR, EmulatedDnie, component_root_public_key},
     key_sets::{ComponentRoots, R1_USER},
-    secure_messaging::Protected,
     session::tests::card_with_channel,
     {Error, StatusWord, Transport},
 };
@@ -14,12 +13,8 @@ fn read_under_channel(card: EmulatedDnie) -> Vec<u8> {
     let mut card = card;
     let roots = ComponentRoots::only(component_root_public_key());
     let mut channel = cwa14890::open(&mut card, &R1_USER, &roots).unwrap();
-    let mut protected = Protected {
-        channel: &mut channel,
-        card: &mut card,
-    };
     read(
-        &mut protected,
+        &mut channel,
         &Location::new(&[0x3F, 0x00, 0x60, 0x10]).unwrap(),
     )
     .unwrap()
