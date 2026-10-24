@@ -43,25 +43,6 @@ fn the_emulator_carries_the_public_halves_of_every_key_set() {
 }
 
 #[test]
-fn resolves_the_idesp_into_a_key_generation() {
-    let cases = [
-        (Some("BMP000001"), KeyGeneration::First),
-        (Some("BMP099999"), KeyGeneration::First),
-        (Some("BMP100000"), KeyGeneration::First),
-        (Some("BMP100001"), KeyGeneration::Second),
-        (Some("BMP100002"), KeyGeneration::Second),
-        (Some("BMP200000"), KeyGeneration::Second),
-        (Some("TST000042"), KeyGeneration::Second),
-        (Some("AAA000001"), KeyGeneration::First),
-        (Some(""), KeyGeneration::Second),
-        (None, KeyGeneration::Second),
-    ];
-    for (idesp, expected) in cases {
-        assert_eq!(KeyGeneration::from_idesp(idesp), expected, "{idesp:?}");
-    }
-}
-
-#[test]
 fn selects_each_key_set_by_generation_and_channel() {
     let sets = [
         (KeyGeneration::First, Channel::Pin, &R1_PIN),

@@ -47,8 +47,8 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-//! Terminal key sets of the CWA-14890 channels, picked by key generation, resolved from the IDESP as `DnieFactory` does, and the
-//! roots of the chip's component certificates.
+//! Terminal key sets of the CWA-14890 channels, picked by key generation and channel, and the roots
+//! of the chip's component certificates.
 
 use rsa::{BigUint, RsaPrivateKey, RsaPublicKey, pkcs8::DecodePublicKey};
 
@@ -58,8 +58,6 @@ mod second_generation;
 pub(crate) use first_generation::{R1_PIN, R1_USER};
 pub(crate) use second_generation::{R2_PIN, R2_USER};
 
-/// Support numbers from this one on take the second key generation.
-const R2_IDESP: &str = "BMP100001";
 const PUBLIC_EXPONENT: u32 = 65_537;
 
 /// Root CA public key the card checks the CA CVC with.
@@ -142,17 +140,6 @@ pub enum KeyGeneration {
     First,
     /// Later cards, and any card whose support number is unknown.
     Second,
-}
-
-impl KeyGeneration {
-    /// Resolves the card's stored support number; an empty or absent one is unknown.
-    pub(crate) fn from_idesp(idesp: Option<&str>) -> Self {
-        if idesp.is_some_and(|idesp| !idesp.is_empty() && idesp < R2_IDESP) {
-            Self::First
-        } else {
-            Self::Second
-        }
-    }
 }
 
 /// Channel a key set opens.
