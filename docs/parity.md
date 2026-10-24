@@ -1,20 +1,22 @@
 # Parity with JMulticard
 
-Snapshot comparing JMulticard `4ec9494` with rdnie `7e960b5`. Line numbers rot; re-run the comparison rather than trusting them after either side moves.
+Snapshot comparing JMulticard `4ec9494` with rdnie `f37136f`. Line numbers rot; re-run the comparison rather than trusting them after either side moves.
 
 ## At a glance
 
 | Capability | rdnie |
 | --- | --- |
-| Change PIN, decrypt (`cipherData`), SHA-1, PACE/NFC, ICAO, other cards, DNIe 1.0/2.0, JCA provider, extended APDUs and the `90 C2` envelope | No, out of scope |
+| SHA-1, PACE/NFC, ICAO, other cards, DNIe 1.0/2.0, JCA provider, extended APDUs and the `90 C2` envelope | No, out of scope |
 | Find the DNIe 3.0/4.0 by its ATR, list and pick readers, reject legacy and burned cards | Yes |
 | CWA-14890 secure channel: PIN and user channels, r1/r2 key sets | Yes |
-| Certificates with their labels, the intermediate CA included | Yes |
+| Labels of the keyed certificates, any certificate by label (the intermediate CA included), the key of a label | Yes |
 | Holder name, surnames and number from a certificate | Yes |
 | PIN retries without a PIN | Yes |
+| Serial number, card name, IDESP and ATR of the opened card | Yes |
+| Change PIN, decrypt (`cipherData`) | No, pending a follow-up |
 | VERIFY without signing | Yes |
 | Signature with VERIFY: PKCS#1 v1.5 of a SHA-256/384/512 digest | Yes |
-| Status words and ATRs described in words | Yes |
+| Status words and ATRs described in words (`Display for Atr`) | Yes |
 
 Every "Yes" sends the same APDUs as JMulticard. Where rdnie behaves differently, it is [on purpose](#on-purpose) or in a case no DNIe reaches ([Open](#open)).
 
@@ -42,8 +44,8 @@ Java paths are relative to `jmulticard/src/main/java/es/gob/jmulticard/` unless 
 | --- | --- | --- |
 | V1.transmit inner `62xx` → Le−1 (V1:759-762) | See the private notes. | An inner warning such as `6282` must reach the caller with its data. rdnie returns it without resending (`secure_messaging.rs` `transmit`). |
 | V1.reset (V1:773-784) | Resets the card and opens the channel again. | Nothing calls it. `Protected::reset` returns an error, so a future caller notices. |
-| Dnie.changePIN | Changes the PIN. | Out of scope: rFirma only signs. The holder changes the PIN at a police station terminal. |
-| Dnie.cipherData, LoadData / SignData | Raw RSA with the private key (`LOAD DATA` + `SIGN DATA`). The JCA provider uses it to decrypt and for signature formats other than PKCS#1 v1.5. | Out of scope: rFirma signs through PSO CDS and decrypts nothing. |
+| Dnie.changePIN | Changes the PIN. | Pending a follow-up: it widens design constraint 1. |
+| Dnie.cipherData, LoadData / SignData | Raw RSA with the private key (`LOAD DATA` + `SIGN DATA`). The JCA provider uses it to decrypt and for signature formats other than PKCS#1 v1.5. | Pending a follow-up: it widens design constraint 1. |
 | callback/*, CancelledOperationException | Asks the holder for the PIN and confirmations through callbacks; cancelling throws. | A driver has no UI. The PIN is a parameter; the consumer asks for it and cancels by not calling `sign`. |
 | CertificateObject issuer / subject / serial, PrivateKeyObject reference / length / name | Parses these PKCS#15 attributes. | Only `toString` and `cipherData` read them. The certificate's DER carries issuer, subject and serial. |
 | readAllRecords, ReadRecordApduCommand | Reads record files. | The core never calls them for a DNIe. |
@@ -62,7 +64,7 @@ Java paths are relative to `jmulticard/src/main/java/es/gob/jmulticard/` unless 
 | Dnie.isSecurityChannelOpen / openSecureChannelIfNotAlreadyOpened | Opens the channel once and reuses it across operations while the connection lives. | Opens new channels for each operation and drops them, keys zeroized, at the end (`session.rs` `operation`). | No session keys survive between operations, and each one starts from a known state. Cost: each operation repeats the handshake. |
 | Dnie.signOperation retry on `LostChannelException` (Dnie.java:298-309) | After a card reset, opens the channel again and repeats the signature, VERIFY included. | Returns `Error::CardReset` and retries nothing. | An operation makes at most one PIN attempt; the caller decides whether to try again with a new `Pin`. |
 | DnieFactory.getDnie reader loop (DnieFactory.java:252-255) | Resets the card in each reader, in order, to read its ATR, until it finds a DNIe. | Reads every reader's ATR without resetting and picks the DNIe (`pcsc_transport.rs` `connect_first_dnie`). | Resetting other cards breaks the sessions other applications have open on them. |
-| Dnie.loadCertificates, eager in the Dnie constructor | Reads the CDF, every certificate and the PrKDF when the card object is built; any bad file fails the whole load. | `Session::certificates` reads the CDF and the PrKDF only and returns each keyed certificate's label and key, without its DER. `Session::certificate(label)` reads that one certificate file on first request. The session keeps the CDF, the PrKDF and each certificate apart; a failed read keeps nothing of that item (`session.rs` `cached`). A bad certificate file fails only the fetch of its label. | Signing needs only the key reference, and a consumer showing one certificate pays for that file alone. One corrupt certificate must not hide the others. |
+| Dnie.loadCertificates, eager in the Dnie constructor | Reads the CDF, every certificate and the PrKDF when the card object is built; any bad file fails the whole load. | `Session::labels` and `Session::private_key` read the CDF and the PrKDF only and give the keyed labels and a label's key, without any DER. `Session::certificate(label)` reads that one certificate file on first request. The session keeps the CDF, the PrKDF and each certificate apart; a failed read keeps nothing of that item (`session.rs` `cached`). A bad certificate file fails only the fetch of its label. | Signing needs only the key reference, and a consumer showing one certificate pays for that file alone. One corrupt certificate must not hide the others. |
 | DnieFactory.getDnie reset on start | Resets the DNIe it picked and classifies the ATR the reset returns. | Never resets the card on its own: `Session::open` classifies `Transport::atr`, the ATR the transport already holds (`session.rs` `open_with`). `Transport::reset` stays for callers who want it. | A reset breaks the state other applications hold on the card, and two shared sessions would reset each other. On a real card, listing with JMulticard (Autofirma) made Firefox ask for the PIN again; opening with rdnie did not. rdnie relies on no state a reset would restore: every read starts by selecting the MF and every PIN operation opens its own channels. |
 | Dnie.getIdesp, Dnie3 constructor | On any read failure leaves the IDESP unset: r2 keys. | r2 only if the IDESP is absent (`6A82`) or empty; any other failure, resets and removals included, fails `Session::open` (`session.rs` `read_idesp`). | A failed read on an r1 card would pick the wrong keys. |
 | Dnie.getPinRetriesLeft, `00 20 00 00 00` | See the private notes. | Same APDU. Takes a count only from `63Cx`, reads `6983` as blocked and fails on anything else. Reads it again before VERIFY in the same transaction and skips VERIFY if it is 0 or differs from the count shown (`pin.rs` `query_retries`, `retries_in`). | The PIN is never sent blind: a misread count could spend the last attempt. |
@@ -87,7 +89,7 @@ Java paths are relative to `jmulticard/src/main/java/es/gob/jmulticard/` unless 
 | Burned ATR `… 65 81` | Looks at the last bytes only. | Also requires the DNIe historical bytes (`atr.rs` → `Error::BurnedDnie`). | A burned DNIe matches both; rdnie just does not call another card burned. |
 | Dnie3.getPinRetriesLeft | Requires an open CWA channel; from the user channel it switches to the PIN channel and stays there. | Opens a PIN channel just for the query (`Session::pin_retries_left`). | Same APDU in the same channel; no PIN in either. |
 | selectFileByName | Selects by name and returns the length from the FCI. | Selects only `Master.File` and ignores the FCI (`files.rs` `select_master_file`). | `Master.File` is the only file selected by name, and nobody uses its length. |
-| Dnie.getPrivateKey, DniePrivateKeyReference | Builds a key reference with identifier, path, name and length. | Keeps identifier and key file (`certificates.rs` `KeyReference { id, file }`). | MSE SET DST needs only the key file; the rest serves `cipherData`. |
+| Dnie.getPrivateKey, DniePrivateKeyReference | Builds a key reference with identifier, path, name and length. | Keeps identifier and key file (`certificates.rs` `KeyReference { id, file }`), returned by `Session::private_key(label)`. | MSE SET DST needs only the key file; the rest serves `cipherData`. |
 | Pkcs15Object mandatory fields | The ASN.1 parse requires every mandatory field. | Reads identifier, path and, in the CDF, label (`pkcs15.rs` `entry`). | A DNIe has every field, so the same objects come out. |
 | PrKDF fallback to CeresScPrKdf (Dnie.java:895-903) | If the PrKDF does not parse, tries again with the CERES layout. | A tolerant parse that accepts both (`pkcs15.rs` `entry`). | The same keys come out. |
 | DnieCertParseUtil | Searches the subject DN string for the name and surnames. | Reads the subject as ASN.1 (`holder.rs` `Holder::from_der`). | Same split of name and surnames. Without a surname attribute rdnie still splits the common name, where Java throws. |
@@ -117,7 +119,7 @@ Java paths are relative to `jmulticard/src/main/java/es/gob/jmulticard/` unless 
 | Dnie3.openUserChannel (Dnie3.java:249) | `pin.rs` `open_user_channel`, `Protected` | User channel nested in the PIN channel. |
 | DnieFactory.ATR, ATR_MASK | `atr.rs` `DNIE_ATR`, `DNIE_ATR_MASK` | |
 | byte 15 `0x04` → Dnie3 | `atr.rs` `check_dnie_3` → `Error::LegacyDnie` | DNIe 4.0 takes the same path. |
-| DnieAtr.toString | `atr.rs` `describe_atr` | Same fields and values, in English. |
+| DnieAtr.toString | `atr.rs` `Display for Atr` | Same fields and values, in English. |
 | Dnie.verifyPin + VerifyApduCommand | `pin.rs` `verify`, `encode`, `refusal` | Same bytes: the low byte of each UTF-16 unit. `63Cx` x>0 → `WrongPin`, `63C0`/`6983` → `PinBlocked`. |
 | Dnie.sign → signOperation: MSE SET DST `00 22 41 B6 84 02 <key file>`, PSO CDS `00 2A 9E 9A` | `session.rs` `sign`, `signature.rs` `sign` | Byte-identical. |
 | Dnie.sign closes with LEAVE_CARD | `pcsc_transport.rs` `Drop` | |
@@ -131,8 +133,8 @@ Java paths are relative to `jmulticard/src/main/java/es/gob/jmulticard/` unless 
 | CompressionUtils (8-byte header + zlib, fallback to raw) | `certificates.rs` `decompressed`, `inflate` | |
 | CDF `5015/6004`, certificate files, PrKDF `5015/6001` | `certificates.rs` `cdf`, `read`, `prkdf` | Same paths and decoding; when they are read is [on purpose](#on-purpose). |
 | CDF id ↔ PrKDF id pairing | `certificates.rs` `keyed` | Shared identifiers: open 2. |
-| CryptoCard.getAliases, getCertificate(alias) | `Session::certificates` → `Certificate { label, key }`, `Session::certificate(label)` | A repeated label: open 2. |
-| Dnie.hideCertsWithoutKey, keyless certs reachable by alias | `Session::certificates`, `Session::certificate` | `INTERMEDIATE_CA_LABEL` names `CertCAIntermediaDGP`; `SIGNATURE_LABEL` names `CertFirmaDigital`. |
+| CryptoCard.getAliases, getCertificate(alias) | `Session::labels`, `Session::certificate(label)` | A repeated label: open 2. |
+| Dnie.hideCertsWithoutKey, keyless certs reachable by alias | `Session::labels`, `Session::certificate` | `INTERMEDIATE_CA_LABEL` names `CertCAIntermediaDGP`; `SIGNATURE_LABEL` names `CertFirmaDigital`. |
 | CertificateObject.getAlias | `pkcs15.rs` `label` | Stored exactly as the CDF has it. |
 | Cdf / PrKdf, up to 10 objects | `pkcs15.rs` `entries` | |
 | CommandApdu short encoding | `apdu.rs` `Command::to_bytes` | |
