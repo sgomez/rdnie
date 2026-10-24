@@ -8,7 +8,7 @@ use rdnie_emulator::{DNIE_3_ATR, EmulatedDnie};
 use recorder::Recorder;
 
 #[test]
-fn a_recorder_runs_its_transactions_in_the_card_s() {
+fn a_recorder_forwards_the_card_s_transaction() {
     let recorder = Session::open(Recorder::new(EmulatedDnie::new(&DNIE_3_ATR)))
         .unwrap()
         .into_transport();
