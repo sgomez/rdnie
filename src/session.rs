@@ -84,7 +84,8 @@ impl<T: Transport> Session<T> {
     ///
     /// Those of [`Transport::transaction`], [`Transport::atr`], [`Error::NotDnie`],
     /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`], and any failure reading the IDESP but its
-    /// absence.
+    /// absence. A card reset by another application since `connect` fails with
+    /// [`Error::CardReset`]: reconnect and open again.
     pub fn open(transport: T) -> Result<Self, Error> {
         Self::open_with(transport, ComponentRoots::embedded())
     }
@@ -244,9 +245,7 @@ fn cached<'a, R>(
 
 /// The IDESP in clear, or `None` if the card has no IDESP file or it is empty.
 fn read_idesp(card: &mut dyn Transport) -> Result<Option<String>, Error> {
-    let Some(location) = Location::new(IDESP) else {
-        return Ok(None);
-    };
+    let location = Location::new(IDESP).expect("the IDESP path is valid");
     let idesp = match files::read(card, &location) {
         Ok(idesp) => idesp,
         Err(Error::Status(FILE_NOT_FOUND)) => return Ok(None),

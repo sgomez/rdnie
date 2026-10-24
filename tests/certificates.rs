@@ -293,7 +293,7 @@ fn lists_and_fetches_the_signature_certificate_by_its_public_label() {
 }
 
 #[test]
-fn fetches_a_keyed_certificate_with_the_der_it_is_listed_with() {
+fn fetches_a_keyed_certificate_by_its_label() {
     let certificate = HolderCertificate::new(1, 120).labelled("CertFirma");
     assert_eq!(
         fetch(std::slice::from_ref(&certificate), "CertFirma"),
