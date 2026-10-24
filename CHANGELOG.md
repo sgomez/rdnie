@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/sgomez/rdnie/compare/rdnie-v0.2.0...rdnie-v0.3.0) - 2026-10-24
+
+### Added
+
+- *(session)* add idesp, card_name and serial_number
+- *(session)* verify the PIN without signing with Session::verify_pin
+
+### Changed
+
+- *(atr)* [**breaking**] add Atr with check and Display, return it from Transport::atr and Session::atr
+- *(session)* [**breaking**] replace Certificate with Session::labels and Session::private_key
+- *(api)* [**breaking**] rename pin_retries_left and DigestAlgorithm, make Response crate-private
+- *(transport)* [**breaking**] split the public transport into Transport and Port
+
+### Fixed
+
+- *(session)* report a certificate file that is not X.509 as MalformedCertificate
+
+### Performance
+
+- *(files)* fetch each next directory header with the object before it
+- *(certificates)* read the CDF and the PrKDF up to their last object
+
 ### Added
 
 - *(session)* `Session::verify_pin` verifies the PIN without signing
