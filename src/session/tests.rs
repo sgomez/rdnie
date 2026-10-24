@@ -17,6 +17,7 @@ use crate::{
 
 mod card_removal;
 mod certificates;
+mod expected_retries;
 mod opening;
 mod pin;
 mod secure_channel;
