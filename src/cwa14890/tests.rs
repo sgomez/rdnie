@@ -32,7 +32,7 @@ const INTERNAL_AUTHENTICATE: u8 = 0x88;
 pub(crate) fn recorded_internal_authentication() -> (Vec<u8>, Vec<u8>) {
     let roots = ComponentRoots::only(component_root_public_key());
     let mut session = Session::open_with_roots(Recorder::new(card_with_channel()), roots).unwrap();
-    session.pin_retries().unwrap();
+    session.pin_retries_left().unwrap();
     let exchanges = session.into_transport().exchanges;
     let (command, response) = exchanges
         .iter()
@@ -99,7 +99,7 @@ fn refuses_an_answer_framed_by_a_key_too_short_for_a_frame() {
 fn refuses_a_tampered_internal_authentication() {
     let card = card_with_channel().tampering_internal_authentication();
     assert!(matches!(
-        open(card).pin_retries(),
+        open(card).pin_retries_left(),
         Err(Error::SecureChannel(_))
     ));
 }
@@ -107,8 +107,8 @@ fn refuses_a_tampered_internal_authentication() {
 #[test]
 fn draws_fresh_randomness_for_every_handshake() {
     let mut session = open(card_with_channel());
-    session.pin_retries().unwrap();
-    session.pin_retries().unwrap();
+    session.pin_retries_left().unwrap();
+    session.pin_retries_left().unwrap();
     let card = session.into_transport();
     let [first, second] = card.handshakes() else {
         panic!("expected two handshakes, got {}", card.handshakes().len());
@@ -120,7 +120,7 @@ fn draws_fresh_randomness_for_every_handshake() {
 #[test]
 fn accepts_a_genuine_component_certificate_chain() {
     let mut session = open(card_with_channel());
-    assert!(session.pin_retries().is_ok());
+    assert!(session.pin_retries_left().is_ok());
     assert_eq!(session.into_transport().internal_authentications(), 1);
 }
 
@@ -145,7 +145,7 @@ fn accepts_a_ca_certificate_the_second_root_signed_whatever_its_issuer() {
     let roots = ComponentRoots::pair(component_root_public_key(), foreign_root_public_key());
     let card = card_with_channel().with_untrusted_intermediate_certificate();
     let mut session = Session::open_with_roots(card, roots).unwrap();
-    assert!(session.pin_retries().is_ok());
+    assert!(session.pin_retries_left().is_ok());
 }
 
 #[test]
@@ -274,7 +274,7 @@ fn sends_the_smaller_of_the_signature_and_its_complement_to_the_card() {
 }
 
 fn open_failing(fault: HandshakeFault) -> Result<u8, Error> {
-    open(card_with_channel().failing(fault)).pin_retries()
+    open(card_with_channel().failing(fault)).pin_retries_left()
 }
 
 #[test]
@@ -341,7 +341,7 @@ const NOT_FROM_THE_ROOT: &str = "the component certificate chain is not signed b
 
 fn refuses_before_authenticating(mut session: Session<EmulatedDnie>, reason: &str) {
     assert!(matches!(
-        session.pin_retries(),
+        session.pin_retries_left(),
         Err(Error::SecureChannel(message)) if message == reason
     ));
     assert_eq!(session.into_transport().internal_authentications(), 0);

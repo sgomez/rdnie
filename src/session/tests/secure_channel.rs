@@ -20,10 +20,10 @@ fn reports_a_secure_channel_error_on_a_bad_response_mac() {
 
 fn reads_retries_and_signs_over(shape: ResponseShape) {
     let mut session = open(signing_card().with_pin_retries(2).shaping_responses(shape));
-    assert_eq!(session.pin_retries().unwrap(), 2);
+    assert_eq!(session.pin_retries_left().unwrap(), 2);
     let certificate = session.certificate("Cert1").unwrap().unwrap();
     let digest = Sha256::digest(b"document");
-    let signature = sign_with(&mut session, &digest, HashAlgorithm::Sha256).unwrap();
+    let signature = sign_with(&mut session, &digest, DigestAlgorithm::Sha256).unwrap();
     verify(
         &certificate,
         Pkcs1v15Sign::new::<Sha256>(),
@@ -79,7 +79,7 @@ fn ends_an_endless_pending_response_inside_the_channel_with_its_status() {
 fn ends_an_endless_wrong_length_inside_the_channel_with_its_status() {
     let mut session = open(card_with_channel().asking_a_wrong_length_forever_inside_the_channel());
     assert!(matches!(
-        session.pin_retries(),
+        session.pin_retries_left(),
         Err(Error::Status(StatusWord(0x6C05)))
     ));
     assert_eq!(session.transport.pin_queries().len(), 1 + 2);
@@ -115,7 +115,7 @@ fn starts_a_fresh_channel_after_each_failure() {
     ];
     for card in faulty {
         let mut session = open(card.with_pin_retries(2));
-        assert!(session.pin_retries().is_err());
-        assert_eq!(session.pin_retries().unwrap(), 2);
+        assert!(session.pin_retries_left().is_err());
+        assert_eq!(session.pin_retries_left().unwrap(), 2);
     }
 }

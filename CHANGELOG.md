@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- *(session)* [**breaking**] rename `Session::pin_retries` to `pin_retries_left`
+- *(signature)* [**breaking**] rename `HashAlgorithm` to `DigestAlgorithm`, and add `DigestAlgorithm::digest_length`
+- *(apdu)* [**breaking**] make `Response` crate-private; `StatusWord` stays public
 - *(session)* `sign` reports a wrong digest length before an invalid PIN format
 - *(session)* after `WrongPin { retries_left }`, the next `sign` or `verify_pin` expects `retries_left` instead of reading the retries again
 - *(session)* `certificate` reports a certificate file that is not X.509 as `MalformedCertificate`

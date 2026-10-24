@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Certificate, Error, HashAlgorithm, KeyReference, Pin, StatusWord, Transport,
+    Certificate, DigestAlgorithm, Error, KeyReference, Pin, StatusWord, Transport,
     atr::check_dnie_3,
     card_authenticator::CardAuthenticator,
     certificates,
@@ -122,24 +122,24 @@ impl<T: Transport> Session<T> {
     /// [`Error::Status`] if the card refuses `INTERNAL AUTHENTICATE`, `GET CHALLENGE` or
     /// `GET CHIP INFO` or gives no retry count, and [`Error::CardReset`] or [`Error::Transport`]
     /// if either strikes during the authentication.
-    pub fn pin_retries(&mut self) -> Result<u8, Error> {
+    pub fn pin_retries_left(&mut self) -> Result<u8, Error> {
         self.pin_guard.read_retries(&mut self.transport)
     }
 
     /// Signs a SHA-256/384/512 digest with `key` after verifying `pin`, and returns the PKCS#1
-    /// v1.5 signature; the retries must still be those last shown, by [`Session::pin_retries`] or
+    /// v1.5 signature; the retries must still be those last shown, by [`Session::pin_retries_left`] or
     /// by the [`Error::WrongPin`] of the previous attempt.
     ///
     /// # Errors
     ///
     /// [`Error::DigestLength`], then [`Error::InvalidPinFormat`], before touching the card, those
-    /// of [`Session::pin_retries`], [`Error::PinRetriesChanged`] if the retries moved between the
+    /// of [`Session::pin_retries_left`], [`Error::PinRetriesChanged`] if the retries moved between the
     /// two phases, [`Error::WrongPin`] after the single attempt and [`Error::Status`] if the card
-    /// refuses the signature. The channel errors are those of [`Session::pin_retries`].
+    /// refuses the signature. The channel errors are those of [`Session::pin_retries_left`].
     pub fn sign(
         &mut self,
         digest: &[u8],
-        algorithm: HashAlgorithm,
+        algorithm: DigestAlgorithm,
         key: &KeyReference,
         pin: Pin,
     ) -> Result<Vec<u8>, Error> {
@@ -155,7 +155,7 @@ impl<T: Transport> Session<T> {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidPinFormat`] before touching the card, those of [`Session::pin_retries`],
+    /// [`Error::InvalidPinFormat`] before touching the card, those of [`Session::pin_retries_left`],
     /// [`Error::PinRetriesChanged`] if the retries moved between the two phases and
     /// [`Error::WrongPin`] after the single attempt.
     pub fn verify_pin(&mut self, pin: Pin) -> Result<(), Error> {
