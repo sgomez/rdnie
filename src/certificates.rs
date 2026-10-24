@@ -27,15 +27,6 @@ pub const INTERMEDIATE_CA_LABEL: &str = "CertCAIntermediaDGP";
 /// Label of the holder's signature certificate, whose key signs.
 pub const SIGNATURE_LABEL: &str = "CertFirmaDigital";
 
-/// Certificate of the holder, paired with its private key on the card.
-#[non_exhaustive]
-pub struct Certificate {
-    /// PKCS#15 label, exactly as the CDF stores it.
-    pub label: String,
-    /// Private key that matches the certificate.
-    pub key: KeyReference,
-}
-
 /// Private key on the card, as the PrKDF describes it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct KeyReference {
@@ -44,12 +35,6 @@ pub struct KeyReference {
 }
 
 // Card data stays out of logs.
-impl fmt::Debug for Certificate {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Certificate").finish_non_exhaustive()
-    }
-}
-
 impl fmt::Debug for KeyReference {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KeyReference").finish_non_exhaustive()
@@ -68,24 +53,24 @@ pub(crate) fn prkdf(card: &mut dyn CommandChannel) -> Result<Vec<pkcs15::Entry>,
     pkcs15::entries(&files::read(card, &location)?, false)
 }
 
-/// The CDF certificates the PrKDF has a key for, each paired with it by identifier.
+/// The labels of the CDF certificates the PrKDF has a key for, each paired with it by identifier.
 pub(crate) fn keyed(
     cdf: &[pkcs15::Entry],
     prkdf: &[pkcs15::Entry],
-) -> Result<Vec<Certificate>, Error> {
+) -> Result<Vec<(String, KeyReference)>, Error> {
     let mut certificates = Vec::with_capacity(cdf.len());
     for entry in cdf {
         if let Some(key) = prkdf.iter().find(|key| key.id == entry.id) {
             let file = location(&key.path)?
                 .last_file()
                 .ok_or(Error::MalformedPkcs15)?;
-            certificates.push(Certificate {
-                label: entry.label.clone(),
-                key: KeyReference {
+            certificates.push((
+                entry.label.clone(),
+                KeyReference {
                     id: entry.id.clone(),
                     file,
                 },
-            });
+            ));
         }
     }
     Ok(certificates)

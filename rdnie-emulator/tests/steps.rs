@@ -31,21 +31,14 @@ fn run_to(step: Step, card: EmulatedDnie) -> Error {
             return error;
         }
     };
-    let certificates = match session.certificates() {
-        Ok(certificates) => certificates,
-        Err(error) => {
-            assert!(
-                matches!(step, Step::Certificates),
-                "certificates failed early"
-            );
-            return error;
-        }
-    };
-    let key = certificates
-        .into_iter()
-        .find(|certificate| certificate.label == SIGNATURE_LABEL)
-        .unwrap()
-        .key;
+    if let Err(error) = session.labels() {
+        assert!(
+            matches!(step, Step::Certificates),
+            "certificates failed early"
+        );
+        return error;
+    }
+    let key = session.private_key(SIGNATURE_LABEL).unwrap().unwrap();
     if let Err(error) = session.pin_retries_left() {
         assert!(matches!(step, Step::PinRetries), "retries failed early");
         return error;
@@ -95,7 +88,7 @@ fn resets_the_card_at_each_step() {
 #[test]
 fn a_removed_card_stays_removed() {
     let mut session = open(schedule(Strike::Removal, Step::Certificates)).unwrap();
-    assert!(matches!(session.certificates(), Err(Error::CardRemoved)));
+    assert!(matches!(session.labels(), Err(Error::CardRemoved)));
     assert!(matches!(
         session.pin_retries_left(),
         Err(Error::CardRemoved)
@@ -112,13 +105,7 @@ fn a_reset_strikes_once() {
 #[test]
 fn a_signing_strike_comes_after_verify() {
     let mut session = open(schedule(Strike::Removal, Step::Signing)).unwrap();
-    let key = session
-        .certificates()
-        .unwrap()
-        .into_iter()
-        .find(|certificate| certificate.label == SIGNATURE_LABEL)
-        .unwrap()
-        .key;
+    let key = session.private_key(SIGNATURE_LABEL).unwrap().unwrap();
     let digest = Sha256::digest(b"document");
     let mut sign = |pin: &str| {
         session.sign(

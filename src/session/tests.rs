@@ -70,8 +70,13 @@ fn sign_with(
     digest: &[u8],
     algorithm: DigestAlgorithm,
 ) -> Result<Vec<u8>, Error> {
-    let key = session.certificates().unwrap().remove(0).key;
+    let key = first_key(session);
     session.sign(digest, algorithm, &key, Pin::new(DEFAULT_PIN.to_owned()))
+}
+
+fn first_key(session: &mut Session<EmulatedDnie>) -> crate::KeyReference {
+    let label = session.labels().unwrap().remove(0);
+    session.private_key(&label).unwrap().unwrap()
 }
 
 fn verify(certificate: &[u8], scheme: Pkcs1v15Sign, digest: &[u8], signature: &[u8]) {
@@ -89,7 +94,7 @@ fn verify(certificate: &[u8], scheme: Pkcs1v15Sign, digest: &[u8], signature: &[
 
 fn sign_with_pin(card: EmulatedDnie, pin: &str) -> (Result<Vec<u8>, Error>, EmulatedDnie) {
     let mut session = open(card);
-    let key = session.certificates().unwrap().remove(0).key;
+    let key = first_key(&mut session);
     let result = session.sign(
         &[0; 32],
         DigestAlgorithm::Sha256,

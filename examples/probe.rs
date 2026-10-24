@@ -13,8 +13,8 @@
 //!    channel and must still pass.
 
 use rdnie::{
-    Certificate, DigestAlgorithm, Error, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration,
-    PcscTransport, Pin, SIGNATURE_LABEL, Session, Transport, describe_atr,
+    DigestAlgorithm, Error, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration, PcscTransport, Pin,
+    SIGNATURE_LABEL, Session, Transport, describe_atr,
 };
 use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
 use sha2_010::{Digest, Sha256};
@@ -72,7 +72,7 @@ fn run() -> Result<(), Error> {
     };
     println!("key set: {key_set}");
 
-    let listed = timed("certificates", || session.certificates())?;
+    let listed = timed("labels", || session.labels())?;
     println!("certificates: {}", listed.len());
     let signature = timed("certificate (signature)", || {
         session.certificate(SIGNATURE_LABEL)
@@ -98,9 +98,9 @@ fn run() -> Result<(), Error> {
     );
 
     let mut certificates = Vec::with_capacity(listed.len());
-    for certificate in listed {
-        println!("label: {}", certificate.label);
-        let Some(der) = session.certificate(&certificate.label)? else {
+    for label in listed {
+        println!("label: {label}");
+        let Some(der) = session.certificate(&label)? else {
             println!("  certificate: fail (not found)");
             continue;
         };
@@ -108,7 +108,7 @@ fn run() -> Result<(), Error> {
             &der,
             std::env::args().any(|argument| argument == "--verbose"),
         );
-        certificates.push((certificate, der));
+        certificates.push((label, der));
     }
     match timed("pin_retries_left", || session.pin_retries_left()) {
         Ok(retries) => {
@@ -146,10 +146,14 @@ fn timed<R>(step: &str, run: impl FnOnce() -> Result<R, Error>) -> Result<R, Err
 /// Signs a fixed digest with the signature key and checks the result against its certificate.
 fn sign(
     session: &mut Session<PcscTransport>,
-    certificates: &[(Certificate, Vec<u8>)],
+    certificates: &[(String, Vec<u8>)],
 ) -> Result<(), Error> {
-    let Some((certificate, der)) = certificates.iter().find(|(_, der)| is_signature(der)) else {
+    let Some((label, der)) = certificates.iter().find(|(_, der)| is_signature(der)) else {
         println!("signature certificate: not found");
+        return Ok(());
+    };
+    let Some(key) = session.private_key(label)? else {
+        println!("signature key: not found");
         return Ok(());
     };
     let retries = session.pin_retries_left()?;
@@ -158,12 +162,7 @@ fn sign(
     let pin = rpassword::prompt_password("PIN (not shown): ")
         .map_err(|error| Error::Transport(format!("cannot read the PIN: {error}")))?;
     let digest = Sha256::digest(b"rdnie probe");
-    let signature = match session.sign(
-        &digest,
-        DigestAlgorithm::Sha256,
-        &certificate.key,
-        Pin::new(pin),
-    ) {
+    let signature = match session.sign(&digest, DigestAlgorithm::Sha256, &key, Pin::new(pin)) {
         Ok(signature) => signature,
         Err(error) => {
             println!("sign: fail ({error})");

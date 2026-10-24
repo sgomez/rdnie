@@ -40,7 +40,7 @@ pub(crate) use apdu::Command;
 pub(crate) use apdu::Response;
 pub use apdu::StatusWord;
 pub use atr::{describe_atr, is_dnie};
-pub use certificates::{Certificate, INTERMEDIATE_CA_LABEL, KeyReference, SIGNATURE_LABEL};
+pub use certificates::{INTERMEDIATE_CA_LABEL, KeyReference, SIGNATURE_LABEL};
 pub use error::Error;
 pub use holder::Holder;
 pub use key_sets::KeyGeneration;

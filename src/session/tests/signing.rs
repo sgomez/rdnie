@@ -31,7 +31,7 @@ fn signs_digests_that_verify_with_the_certificate() {
 #[test]
 fn rejects_a_digest_of_another_length_before_any_apdu() {
     let mut session = open(signing_card());
-    let key = session.certificates().unwrap().remove(0).key;
+    let key = first_key(&mut session);
     let sent = session.transport.commands();
     let result = session.sign(
         &[0; 48],
@@ -84,7 +84,7 @@ fn signing_with_a_listed_key_reads_no_certificate_file() {
 #[test]
 fn reports_a_wrong_digest_length_before_an_invalid_pin_format() {
     let mut session = open(signing_card());
-    let key = session.certificates().unwrap().remove(0).key;
+    let key = first_key(&mut session);
     let result = session.sign(
         &[0; 48],
         DigestAlgorithm::Sha256,
