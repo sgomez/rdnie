@@ -17,11 +17,22 @@ Rust driver for the Spanish electronic ID card (DNIe). It talks APDU to the card
 
 DNIe 1.0 and 2.0, NFC and PACE, changing the PIN, decrypting and other cards are out of scope. [`docs/parity.md`](https://github.com/sgomez/rdnie/blob/main/docs/parity.md) compares it with JMulticard, the driver it is ported from.
 
+## Performance
+
+It reads only what is asked for and never resets the card, so it sends fewer APDUs than JMulticard and OpenSC. Measured with rdnie 0.3.0, JMulticard 2.1 and OpenSC 0.27 on one DNIe and reader, from connecting to holding the signature certificate:
+
+| | Time | APDUs |
+| --- | --- | --- |
+| **rdnie** | **416 ms** | **42** |
+| JMulticard | 1323 ms (3.2×) | 84 |
+| OpenSC | 1526 ms (3.7×) | 130 |
+
+Reading every certificate, as JMulticard does, rdnie takes 830 ms. Method and caveats: [`docs/benchmark.md`](https://github.com/sgomez/rdnie/blob/main/docs/benchmark.md).
+
 ## Usage
 
-```toml
-[dependencies]
-rdnie = "0.1"
+```sh
+cargo add rdnie
 ```
 
 ```rust

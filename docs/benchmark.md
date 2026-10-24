@@ -8,10 +8,10 @@ Median of 20 runs; min and max within 1 % of it except where noted.
 
 | Tool | Total | vs rdnie |
 | --- | --- | --- |
-| rdnie at `b0761bb`, release build | 416 ms | |
+| rdnie 0.3.0 (`b0761bb`), release build | 416 ms | |
 | rdnie, every certificate (`--all`) | 830 ms | 2.0× |
 | JMulticard 2.1 | 1323 ms | 3.2× |
-| OpenSC, PKCS#11, file cache off | 1526 ms | 3.7× |
+| OpenSC 0.27, PKCS#11, file cache off | 1526 ms | 3.7× |
 
 JMulticard's slowest run, 2917 ms, is most likely its first: class loading and JIT.
 
