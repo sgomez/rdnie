@@ -59,8 +59,8 @@ pub enum Error {
         /// Attempts the card still allows.
         retries_left: u8,
     },
-    /// The retries changed between reading them and verifying the PIN.
-    #[error("the PIN retries changed since they were read")]
+    /// The retries on the card differ from those the session expects.
+    #[error("the PIN retries changed since the session last knew them")]
     PinRetriesChanged,
     /// The session expects no retries: read them with `Session::pin_retries_left` first.
     #[error("the PIN retries were not read in this session")]
