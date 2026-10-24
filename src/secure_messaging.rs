@@ -62,10 +62,7 @@ use retail_mac::{KeyInit, Mac, RetailMac};
 use sha1::{Digest, Sha1};
 use zeroize::Zeroize;
 
-use crate::{
-    Command, Error, Response, StatusWord, Transport,
-    transport::{MAX_RESENDS, WRONG_LENGTH, short_le},
-};
+use crate::{Command, Error, Response, StatusWord, Transport, resend::Resends};
 
 const BLOCK: usize = 8;
 const PROTECTED_CLA: u8 = 0x0C;
@@ -144,40 +141,14 @@ impl SecureMessaging {
         transport: &mut T,
         command: &Command,
     ) -> Result<Response, Error> {
-        let mut resent = None;
-        let result = self.follow(transport, command, &mut resent);
-        if let Some(mut copy) = resent {
-            copy.data.zeroize();
-        }
-        result
-    }
-
-    /// Keeps the latest resent copy in `resent`, so the caller wipes it on every exit.
-    fn follow<T: Transport + ?Sized>(
-        &mut self,
-        transport: &mut T,
-        command: &Command,
-        resent: &mut Option<Command>,
-    ) -> Result<Response, Error> {
-        let mut resends = 0;
+        let mut resends = Resends::default();
         loop {
-            let sent = resent.as_ref().unwrap_or(command);
-            let protected = self.protect(sent)?;
+            let protected = self.protect(resends.current(command))?;
             let response = self.unprotect(&transport.transmit(&protected)?)?;
-            let [WRONG_LENGTH, le] = response.status.0.to_be_bytes() else {
+            if !Resends::is_wrong_length(response.status) {
                 return Ok(response);
-            };
-            if resends == MAX_RESENDS {
-                return Err(Error::Status(response.status));
             }
-            resends += 1;
-            let next = Command {
-                le: Some(short_le(le)),
-                ..sent.clone()
-            };
-            if let Some(mut old) = resent.replace(next) {
-                old.data.zeroize();
-            }
+            resends.resend_with_le(command, response.status)?;
         }
     }
 

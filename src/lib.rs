@@ -27,6 +27,7 @@ mod pkcs15;
 #[cfg(test)]
 #[path = "../tests/recorder/mod.rs"]
 mod recorder;
+mod resend;
 mod secure_messaging;
 mod session;
 mod signature;
