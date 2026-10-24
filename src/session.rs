@@ -148,6 +148,19 @@ impl<T: Transport> Session<T> {
             })
     }
 
+    /// Verifies `pin` on the card without signing, under the same policy as [`Session::sign`]; a
+    /// later `sign` verifies the PIN again.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidPinFormat`] before touching the card, those of [`Session::pin_retries`],
+    /// [`Error::PinRetriesChanged`] if the retries moved between the two phases and
+    /// [`Error::WrongPin`] after the single attempt.
+    pub fn verify_pin(&mut self, pin: Pin) -> Result<(), Error> {
+        self.pin_guard
+            .verified(&mut self.transport, pin, |_| Ok(()))
+    }
+
     /// The terminal key generation the card's support number selects.
     #[must_use]
     pub fn key_generation(&self) -> KeyGeneration {

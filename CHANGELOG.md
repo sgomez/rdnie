@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- *(session)* `Session::verify_pin` verifies the PIN without signing
+
 ### Changed
 
 - *(session)* `sign` reports a wrong digest length before an invalid PIN format
