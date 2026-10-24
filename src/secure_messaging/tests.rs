@@ -1,5 +1,5 @@
 use super::*;
-use crate::Transport;
+use crate::Port;
 
 // Expected values computed with OpenSSL, independently of this module.
 fn hex(text: &str) -> Vec<u8> {
@@ -242,25 +242,10 @@ struct ScriptedCard {
     sent: Vec<Vec<u8>>,
 }
 
-impl Transport for ScriptedCard {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+impl Port for ScriptedCard {
+    fn transmit(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         self.sent.push(apdu.to_vec());
         Ok(self.responses.remove(0))
-    }
-
-    fn atr(&self) -> Result<Vec<u8>, Error> {
-        Ok(vec![0x3B, 0x7F])
-    }
-
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        unreachable!("the codec never resets the card")
-    }
-
-    fn transaction<R>(
-        &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
-    ) -> Result<R, Error> {
-        body(self)
     }
 }
 

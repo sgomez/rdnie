@@ -3,26 +3,31 @@ use super::*;
 struct Unplugged(EmulatedDnie, bool);
 
 impl crate::Transport for Unplugged {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
-        if self.1 {
-            return Err(Error::Transport("unplugged".to_owned()));
-        }
-        self.0.transmit_raw(apdu)
-    }
-
     fn atr(&self) -> Result<Vec<u8>, Error> {
         self.0.atr()
     }
 
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        self.0.reset()
-    }
-
     fn transaction<R>(
         &mut self,
-        body: impl FnOnce(&mut dyn crate::Transport) -> Result<R, Error>,
+        body: impl FnOnce(&mut dyn crate::Port) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        body(self)
+        let unplugged = self.1;
+        self.0
+            .transaction(|port| body(&mut UnpluggedPort { port, unplugged }))
+    }
+}
+
+struct UnpluggedPort<'a> {
+    port: &'a mut dyn crate::Port,
+    unplugged: bool,
+}
+
+impl crate::Port for UnpluggedPort<'_> {
+    fn transmit(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        if self.unplugged {
+            return Err(Error::Transport("unplugged".to_owned()));
+        }
+        self.port.transmit(apdu)
     }
 }
 

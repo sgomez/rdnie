@@ -13,7 +13,8 @@ pub enum Error {
     /// The response is too short to carry a status word.
     #[error("response of {0} bytes has no status word")]
     TruncatedResponse(usize),
-    /// The command does not fit in a short APDU.
+    /// A command does not fit in a short APDU, as when the card declares a file longer than an
+    /// offset can address.
     #[error("{0} bytes do not fit in a short APDU")]
     CommandTooLong(usize),
     /// A secure messaging response failed its MAC check or is malformed.

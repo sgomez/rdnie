@@ -5,7 +5,7 @@ use crate::{
     emulator::{DNIE_3_ATR, EmulatedDnie, component_root_public_key},
     key_sets::{ComponentRoots, R1_USER},
     session::tests::card_with_channel,
-    {Error, StatusWord, Transport},
+    {Error, Port, StatusWord, Transport},
 };
 
 const FILE: [u8; 2] = [0x60, 0x10];
@@ -13,11 +13,13 @@ const FILE: [u8; 2] = [0x60, 0x10];
 fn read_under_channel(card: EmulatedDnie) -> Vec<u8> {
     let mut card = card;
     let roots = ComponentRoots::only(component_root_public_key());
-    let mut channel = cwa14890::open(PlainChannel::new(&mut card), &R1_USER, &roots).unwrap();
-    read(
-        &mut channel,
-        &Location::new(&[0x3F, 0x00, 0x60, 0x10]).unwrap(),
-    )
+    card.transaction(|port| {
+        let mut channel = cwa14890::open(PlainChannel::new(port), &R1_USER, &roots)?;
+        read(
+            &mut channel,
+            &Location::new(&[0x3F, 0x00, 0x60, 0x10]).unwrap(),
+        )
+    })
     .unwrap()
 }
 
@@ -42,7 +44,10 @@ fn drops_data_a_secure_channel_did_not_authenticate() {
 #[test]
 fn selects_the_master_file_whatever_a_card_answers_with_9000() {
     let mut card = EmulatedDnie::new(&DNIE_3_ATR).answering_master_file_selection_with(&[1, 2, 3]);
-    assert!(select_master_file(&mut PlainChannel::new(&mut card)).is_ok());
+    assert!(
+        card.transaction(|port| select_master_file(&mut PlainChannel::new(port)))
+            .is_ok()
+    );
 }
 
 struct PlainFile {
@@ -64,8 +69,8 @@ impl PlainFile {
     }
 }
 
-impl Transport for PlainFile {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+impl Port for PlainFile {
+    fn transmit(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         let ok = [0x90, 0x00];
         match apdu[1] {
             0xA4 if apdu[2] == 0x04 => Ok(ok.to_vec()),
@@ -87,24 +92,6 @@ impl Transport for PlainFile {
                 Ok([&self.content[offset..end], &ok].concat())
             }
         }
-    }
-
-    fn atr(&self) -> Result<Vec<u8>, Error> {
-        unreachable!()
-    }
-
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        unreachable!()
-    }
-
-    fn transaction<R>(
-        &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
-    ) -> Result<R, Error>
-    where
-        Self: Sized,
-    {
-        body(self)
     }
 }
 
