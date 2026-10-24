@@ -47,7 +47,7 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-//! Terminal key sets of the CWA-14890 channels, picked by IDESP as `DnieFactory` does, and the
+//! Terminal key sets of the CWA-14890 channels, picked by key generation, resolved from the IDESP as `DnieFactory` does, and the
 //! roots of the chip's component certificates.
 
 use rsa::{BigUint, RsaPrivateKey, RsaPublicKey, pkcs8::DecodePublicKey};
@@ -145,7 +145,8 @@ pub enum KeyGeneration {
 }
 
 impl KeyGeneration {
-    pub(crate) fn of_card(idesp: Option<&str>) -> Self {
+    /// Resolves the card's stored support number; an empty or absent one is unknown.
+    pub(crate) fn from_idesp(idesp: Option<&str>) -> Self {
         if idesp.is_some_and(|idesp| !idesp.is_empty() && idesp < R2_IDESP) {
             Self::First
         } else {
@@ -172,9 +173,9 @@ pub(crate) struct KeySet {
 }
 
 impl KeySet {
-    /// The set for `channel` on a card with `idesp`; the second generation if it is unknown.
-    pub(crate) fn for_card(idesp: Option<&str>, channel: Channel) -> &'static Self {
-        match (KeyGeneration::of_card(idesp), channel) {
+    /// The set for `channel` in `generation`.
+    pub(crate) fn for_generation(generation: KeyGeneration, channel: Channel) -> &'static Self {
+        match (generation, channel) {
             (KeyGeneration::First, Channel::Pin) => &R1_PIN,
             (KeyGeneration::First, Channel::User) => &R1_USER,
             (KeyGeneration::Second, Channel::Pin) => &R2_PIN,
