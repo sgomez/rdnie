@@ -5,7 +5,9 @@ mod recorder;
 use std::collections::BTreeSet;
 
 use rdnie::Session;
-use rdnie_emulator::{DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, cdf, prkdf};
+use rdnie_emulator::{
+    CDF, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, PRKDF, cdf, prkdf,
+};
 use recorder::{Recorder, write_corpus};
 use x509_cert::{
     attr::AttributeTypeAndValue,
@@ -18,6 +20,13 @@ use x509_cert::{
 };
 
 const SELECT: u8 = 0xA4;
+/// The length the CDF and the PrKDF of a real DNIe announce, mostly `00`.
+const ANNOUNCED: usize = 2100;
+
+fn padded(mut directory: Vec<u8>) -> Vec<u8> {
+    directory.resize(ANNOUNCED, 0x00);
+    directory
+}
 
 fn certificate_sets() -> Vec<Vec<HolderCertificate>> {
     vec![
@@ -61,7 +70,9 @@ fn dnie_subject() -> RdnSequence {
 fn recorded(delivery: Delivery, certificates: &[HolderCertificate]) -> Vec<(Vec<u8>, Vec<u8>)> {
     let card = EmulatedDnie::new(&DNIE_3_ATR)
         .delivering(delivery)
-        .with_certificates(certificates);
+        .with_certificates(certificates)
+        .with_file(&CDF, padded(cdf(certificates)))
+        .with_file(&PRKDF, padded(prkdf(certificates)));
     let mut session = Session::open(Recorder::new(card)).unwrap();
     for label in session.labels().unwrap() {
         session.certificate(&label).unwrap().unwrap();
@@ -94,7 +105,10 @@ fn writes_the_seed_corpora() {
     write_corpus("files", fcis);
     write_corpus(
         "pkcs15",
-        sets.iter().flat_map(|set| [cdf(set), prkdf(set)]).collect(),
+        sets.iter()
+            .flat_map(|set| [cdf(set), prkdf(set)])
+            .flat_map(|directory| [padded(directory.clone()), directory])
+            .collect(),
     );
     write_corpus(
         "certificates",

@@ -51,6 +51,15 @@ deny:
     cargo deny check
 
 # Mutates the code and reports the mutants the tests miss; slow, run by hand.
+# A mutant that loops while appending bytes would exhaust the RAM before the timeout.
+[linux]
+[positional-arguments]
+mutants *args:
+    systemd-run --user --scope --quiet -p MemoryMax=8G -p MemorySwapMax=0 cargo mutants "$@"
+
+# Mutates the code and reports the mutants the tests miss; slow, run by hand.
+[macos]
+[windows]
 [positional-arguments]
 mutants *args:
     cargo mutants "$@"
