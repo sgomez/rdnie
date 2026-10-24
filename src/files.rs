@@ -15,7 +15,7 @@ const EOF_REACHED: StatusWord = StatusWord(0x6282);
 const OFFSET_OUTSIDE_EF: StatusWord = StatusWord(0x6B00);
 const FCI: u8 = 0x6F;
 /// A tag of one byte and a length of up to two.
-const MAX_HEADER: usize = 4;
+pub(crate) const MAX_HEADER: usize = 4;
 
 /// Absolute path to a file, without the master file.
 pub(crate) struct Location(Vec<[u8; 2]>);
@@ -40,7 +40,7 @@ impl Location {
 
 /// Selects the master file by name, then each file in `location`, and reads the last one whole.
 pub(crate) fn read(card: &mut dyn CommandChannel, location: &Location) -> Result<Vec<u8>, Error> {
-    let mut file = Binary::select(card, location)?;
+    let mut file = SelectedFile::select(card, location)?;
     file.read_to(file.length)?;
     Ok(file.content)
 }
@@ -51,15 +51,15 @@ pub(crate) fn read_sequences(
     location: &Location,
     objects: usize,
 ) -> Result<Vec<u8>, Error> {
-    let mut file = Binary::select(card, location)?;
+    let mut file = SelectedFile::select(card, location)?;
     let mut start = 0;
+    file.read_to(MAX_HEADER)?;
     for _ in 0..objects {
-        file.read_to(start + MAX_HEADER)?;
         let Some(length) = file.content.get(start..).and_then(sequence_length) else {
             break;
         };
         start += length;
-        file.read_to(start)?;
+        file.read_to(start + MAX_HEADER)?;
     }
     Ok(file.content)
 }
@@ -158,7 +158,7 @@ fn take<'a>(body: &'a [u8], tag: u8, index: &mut usize) -> Option<&'a [u8]> {
 }
 
 /// The selected file, read from its start in chunks.
-struct Binary<'a> {
+struct SelectedFile<'a> {
     card: &'a mut dyn CommandChannel,
     length: usize,
     offset: usize,
@@ -166,7 +166,7 @@ struct Binary<'a> {
     ended: bool,
 }
 
-impl<'a> Binary<'a> {
+impl<'a> SelectedFile<'a> {
     fn select(card: &'a mut dyn CommandChannel, location: &Location) -> Result<Self, Error> {
         select_master_file(card)?;
         let mut length = 0;

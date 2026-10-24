@@ -48,20 +48,35 @@ pub fn cwa14890(input: &[u8]) -> Result<bool, Error> {
     cwa14890::check_answers(input, &ComponentRoots::embedded())
 }
 
-/// A CDF, whose objects carry labels, and a PrKDF, whose objects do not, decoded whole and as
-/// read object by object from a card that stores it.
+/// A CDF or PrKDF, whose decode whole must match its decode as read object by object from a card.
 pub fn pkcs15(file: &[u8]) -> Result<usize, Error> {
+    let file = &file[..file.len().min(usize::from(u16::MAX))];
     let location = files::Location::new(&[0x60, 0x04]).expect("the path is valid");
     let read = files::read_sequences(
         &mut PlainChannel::new(&mut StoredFile(file)),
         &location,
         pkcs15::MAX_OBJECTS,
     )?;
-    let mut entries = 0;
-    for bytes in [file, &read] {
-        entries += pkcs15::entries(bytes, true)?.len() + pkcs15::entries(bytes, false)?.len();
+    for labelled in [true, false] {
+        assert_eq!(
+            decoded(file, labelled),
+            decoded(&read, labelled),
+            "the object-by-object read changed the decode"
+        );
     }
-    Ok(entries)
+    Ok(pkcs15::entries(file, true)?.len() + pkcs15::entries(file, false)?.len())
+}
+
+type Decoded = Option<Vec<(String, Vec<u8>, Vec<u8>)>>;
+
+fn decoded(bytes: &[u8], labelled: bool) -> Decoded {
+    let entries = pkcs15::entries(bytes, labelled).ok()?;
+    Some(
+        entries
+            .into_iter()
+            .map(|e| (e.label, e.id, e.path))
+            .collect(),
+    )
 }
 
 /// A card that answers every SELECT with the FCI of one file and reads it as a DNIe does.

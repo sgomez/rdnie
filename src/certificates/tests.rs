@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
+use std::ops::Range;
 
 use crate::{
     Error, KeyReference, Session,
     emulator::{CDF, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, PRKDF, cdf, prkdf},
+    files::MAX_HEADER,
     recorder::Recorder,
 };
 
@@ -26,8 +27,6 @@ fn pairs_each_certificate_with_the_file_of_its_key() {
 
 const SELECT: u8 = 0xA4;
 const READ_BINARY: u8 = 0xB0;
-/// The most a directory read takes past its last object: a tag and a long-form length of two bytes.
-const HEADER: usize = 4;
 /// The length the CDF and the PrKDF of a real DNIe announce.
 const ANNOUNCED: usize = 2100;
 /// The zeros the emulator ends its CDF and PrKDF with.
@@ -70,11 +69,38 @@ fn padded_card(byte: u8) -> EmulatedDnie {
     card_storing(padded(cdf_objects(), byte), padded(prkdf_objects(), byte))
 }
 
-/// What `labels()` and `private_key()` give, and the furthest READ BINARY into each file.
+type Exchanges = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// The bytes each READ BINARY into `directory` asked for.
+fn reads(exchanges: &Exchanges, directory: [[u8; 2]; 2]) -> Vec<Range<usize>> {
+    let mut selected = [0; 2];
+    let mut reads = Vec::new();
+    for (command, _) in exchanges {
+        match command[..] {
+            [0x00, SELECT, 0x00, 0x00, 0x02, high, low] => selected = [high, low],
+            [0x00, READ_BINARY, p1, p2, le] if selected == directory[1] => {
+                let offset = usize::from(u16::from_be_bytes([p1, p2]));
+                reads.push(offset..offset + usize::from(le));
+            }
+            _ => {}
+        }
+    }
+    reads
+}
+
+fn read_up_to(exchanges: &Exchanges, directory: [[u8; 2]; 2]) -> usize {
+    reads(exchanges, directory)
+        .iter()
+        .map(|read| read.end)
+        .max()
+        .unwrap()
+}
+
+/// What `labels()` and `private_key()` give, and what went to the card.
 struct Listing {
     labels: Vec<String>,
     keys: Vec<Option<KeyReference>>,
-    read_up_to: BTreeMap<[u8; 2], usize>,
+    exchanges: Exchanges,
 }
 
 impl Listing {
@@ -88,7 +114,7 @@ impl Listing {
         Self {
             labels,
             keys,
-            read_up_to: furthest_reads(session.into_transport()),
+            exchanges: session.into_transport().exchanges,
         }
     }
 
@@ -98,7 +124,7 @@ impl Listing {
     }
 
     fn read_up_to(&self, directory: [[u8; 2]; 2]) -> usize {
-        self.read_up_to[&directory[1]]
+        read_up_to(&self.exchanges, directory)
     }
 
     fn assert_lists_the_reference(&self) {
@@ -108,27 +134,9 @@ impl Listing {
     }
 
     fn assert_reads_one_header_past_the_objects(&self) {
-        assert_eq!(self.read_up_to(CDF), cdf_objects().len() + HEADER);
-        assert_eq!(self.read_up_to(PRKDF), prkdf_objects().len() + HEADER);
+        assert_eq!(self.read_up_to(CDF), cdf_objects().len() + MAX_HEADER);
+        assert_eq!(self.read_up_to(PRKDF), prkdf_objects().len() + MAX_HEADER);
     }
-}
-
-/// The furthest byte each READ BINARY asked for, by the file selected last.
-fn furthest_reads(card: Recorder<EmulatedDnie>) -> BTreeMap<[u8; 2], usize> {
-    let mut furthest = BTreeMap::new();
-    let mut file = [0; 2];
-    for (command, _) in card.exchanges {
-        match command[..] {
-            [0x00, SELECT, 0x00, 0x00, 0x02, high, low] => file = [high, low],
-            [0x00, READ_BINARY, p1, p2, le] => {
-                let end = usize::from(u16::from_be_bytes([p1, p2])) + usize::from(le);
-                let read: &mut usize = furthest.entry(file).or_default();
-                *read = end.max(*read);
-            }
-            _ => {}
-        }
-    }
-    furthest
 }
 
 #[test]
@@ -136,6 +144,14 @@ fn reads_a_zero_padded_cdf_and_prkdf_only_up_to_their_last_object() {
     let listing = Listing::of(padded_card(0x00));
     listing.assert_lists_the_reference();
     listing.assert_reads_one_header_past_the_objects();
+}
+
+#[test]
+fn reads_each_next_header_with_the_object_before_it() {
+    let listing = Listing::of(padded_card(0x00));
+    // The first header, then two chunks for the first object and one for the second, each with the
+    // header after it.
+    assert_eq!(reads(&listing.exchanges, CDF).len(), 4);
 }
 
 #[test]
@@ -168,8 +184,8 @@ fn reads_whole_a_directory_its_objects_fill() {
 fn stops_where_a_card_overstating_the_length_ends_the_file() {
     // With no padding the header read starts past the end (`6B00`); with two bytes it spans it (`6282`).
     for padding in [0, 2] {
-        let pad = |objects: Vec<u8>| padded(objects.clone(), 0)[..objects.len() + padding].to_vec();
-        let card = card_storing(pad(cdf_objects()), pad(prkdf_objects()))
+        let stored = |objects: Vec<u8>| [objects, vec![0; padding]].concat();
+        let card = card_storing(stored(cdf_objects()), stored(prkdf_objects()))
             .overstating_length(&CDF, 200)
             .overstating_length(&PRKDF, 200);
         let listing = Listing::of(card);
@@ -189,24 +205,19 @@ fn reads_a_padded_directory_through_get_response_and_exact_le() {
 
 #[test]
 fn rejects_an_object_the_end_of_the_file_cuts_short_without_reading_past_it() {
-    for (directory, cut) in [(CDF, 300), (PRKDF, 20)] {
-        let mut cdf = padded(cdf_objects(), 0x00);
-        let mut prkdf = padded(prkdf_objects(), 0x00);
-        let file = if directory == CDF {
-            &mut cdf
-        } else {
-            &mut prkdf
-        };
-        file.truncate(cut);
-        let card = Recorder::new(card_storing(cdf, prkdf));
-        let mut session = Session::open(card).unwrap();
+    for (directory, objects, cut) in [(CDF, cdf_objects(), 300), (PRKDF, prkdf_objects(), 20)] {
+        let card = padded_card(0x00).with_file(&directory, objects[..cut].to_vec());
+        let mut session = Session::open(Recorder::new(card)).unwrap();
         assert!(matches!(session.labels(), Err(Error::MalformedPkcs15)));
-        assert_eq!(furthest_reads(session.into_transport())[&directory[1]], cut);
+        assert_eq!(
+            read_up_to(&session.into_transport().exchanges, directory),
+            cut
+        );
     }
 }
 
 #[test]
-fn reads_no_further_than_the_last_object_the_bound_allows() {
+fn reads_no_further_than_one_header_past_the_last_object_the_bound_allows() {
     let certificates: Vec<HolderCertificate> = (1..=11)
         .map(|id| HolderCertificate::new(id, 120).labelled(&format!("Cert{id}")))
         .collect();
@@ -216,5 +227,8 @@ fn reads_no_further_than_the_last_object_the_bound_allows() {
     let mut session = Session::open(Recorder::new(card)).unwrap();
     assert_eq!(session.labels().unwrap().len(), 9);
     let ten = objects(&cdf(&certificates[..10])).len();
-    assert_eq!(furthest_reads(session.into_transport())[&CDF[1]], ten);
+    assert_eq!(
+        read_up_to(&session.into_transport().exchanges, CDF),
+        ten + MAX_HEADER
+    );
 }
