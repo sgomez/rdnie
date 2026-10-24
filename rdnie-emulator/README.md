@@ -25,4 +25,4 @@ The card can also be a DNIe 4.0, expect another PIN, hold fewer retries, or be r
 
 The `faults` feature exposes the knobs rdnie's own tests use and is outside semver.
 
-Licensed under EUPL-1.2. Ported files keep the attribution of their JMulticard source; see `NOTICE`.
+Licensed under EUPL-1.2. Parts are derived from JMulticard; see `NOTICE`.

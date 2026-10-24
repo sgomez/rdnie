@@ -5,7 +5,7 @@
 - No test, CI job, issue or PR uses or carries data from a real DNIe: certificates, names, document or serial numbers, or APDU dumps containing them. ATRs and status words are fine.
 - Cryptography comes from RustCrypto; the crate composes primitives and implements none.
 - No `unsafe`.
-- Code ported from JMulticard keeps the attribution of its source in the file header.
+- A file ported from JMulticard starts with `// Derived from JMulticard: see LICENSE.jmulticard.md.`
 
 ## Commands
 

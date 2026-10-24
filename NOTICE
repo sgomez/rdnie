@@ -7,5 +7,5 @@ Parts of this software are derived from JMulticard
 (https://github.com/ctt-gob-es/jmulticard, commit 4ec9494), by the Dirección
 General de Modernización Administrativa, Procedimientos e Impulso de la
 Administración Electrónica (2012), dual-licensed under the LGPL 2.1+ and the
-EUPL 1.1+. rdnie takes the EUPL branch. Each derived file keeps the notice of
-its source and names its source classes and their authors.
+EUPL 1.1+. rdnie takes the EUPL branch. Ported to Rust and modified since October
+2026; LICENSE.jmulticard.md carries the notice of the sources.

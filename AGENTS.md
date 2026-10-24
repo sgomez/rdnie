@@ -6,7 +6,7 @@ Rust driver for the Spanish electronic ID card (DNIe) that talks APDU to the car
 
 ## Design constraints
 
-1. **The protocol is ported from JMulticard** ([ctt-gob-es/jmulticard](https://github.com/ctt-gob-es/jmulticard)): only the contact DNIe (CWA-14890 secure channel, certificates, retry counter, VERIFY and signing). No PACE, NFC or other cards. Ported code is a derivative work: each file keeps the attribution of its source.
+1. **The protocol is ported from JMulticard** ([ctt-gob-es/jmulticard](https://github.com/ctt-gob-es/jmulticard)): only the contact DNIe (CWA-14890 secure channel, certificates, retry counter, VERIFY and signing). No PACE, NFC or other cards. Ported code is a derivative work: each derived file starts with `// Derived from JMulticard: see LICENSE.jmulticard.md.`
 2. **Cryptography comes from RustCrypto, never hand-written.** The crate composes primitives (3DES, AES, retail MAC, RSA, SHA) and implements none.
 3. **The PIN is never sent blind.** The remaining retries are read before VERIFY, and an operation makes at most one attempt.
 4. **No `unsafe`** (`unsafe_code = "forbid"` in `Cargo.toml`).

@@ -7,7 +7,7 @@ license = "EUPL-1.2"
 description = "Emulated Spanish electronic ID card (DNIe) behind rdnie's Transport, for tests without a card"
 repository = "https://github.com/sgomez/rdnie"
 readme = "README.md"
-include = ["/src", "/README.md", "/LICENSE", "/NOTICE", "/CHANGELOG.md"]
+include = ["/src", "/README.md", "/LICENSE", "/NOTICE", "/LICENSE.jmulticard.md", "/CHANGELOG.md"]
 keywords = ["dnie", "smartcard", "emulator", "apdu", "testing"]
 categories = ["development-tools::testing", "cryptography"]
 

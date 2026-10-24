@@ -7,7 +7,7 @@ license = "EUPL-1.2"
 description = "Spanish electronic ID card (DNIe) driver over PC/SC: CWA-14890 secure channel, certificates, PIN retry counter and signing"
 repository = "https://github.com/sgomez/rdnie"
 readme = "README.md"
-include = ["/src", "/examples", "/README.md", "/LICENSE", "/NOTICE", "/CHANGELOG.md"]
+include = ["/src", "/examples", "/README.md", "/LICENSE", "/NOTICE", "/LICENSE.jmulticard.md", "/CHANGELOG.md"]
 keywords = ["dnie", "smartcard", "pcsc", "apdu", "signature"]
 categories = ["cryptography", "hardware-support"]
 
