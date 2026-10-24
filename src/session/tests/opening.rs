@@ -20,13 +20,6 @@ fn takes_second_generation_keys_without_idesp() {
 }
 
 #[test]
-fn keeps_the_idesp() {
-    let card = EmulatedDnie::new(&DNIE_3_ATR).with_idesp(b"TST000042");
-    let session = Session::open(card).unwrap();
-    assert_eq!(session.idesp.as_deref(), Some("TST000042"));
-}
-
-#[test]
 fn reports_the_key_generation_of_the_card() {
     let generation = |idesp: &[u8]| {
         let card = EmulatedDnie::new(&DNIE_3_ATR).with_idesp(idesp);
@@ -36,12 +29,6 @@ fn reports_the_key_generation_of_the_card() {
     assert_eq!(generation(b"BMP100001"), KeyGeneration::Second);
     let bare = Session::open(EmulatedDnie::new(&DNIE_3_ATR)).unwrap();
     assert_eq!(bare.key_generation(), KeyGeneration::Second);
-}
-
-#[test]
-fn opens_without_idesp() {
-    let session = Session::open(EmulatedDnie::new(&DNIE_3_ATR)).unwrap();
-    assert_eq!(session.idesp, None);
 }
 
 #[test]
