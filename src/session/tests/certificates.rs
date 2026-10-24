@@ -124,7 +124,7 @@ fn a_corrupt_certificate_fails_only_its_fetch() {
     assert_eq!(session.certificates().unwrap().len(), 2);
     assert!(matches!(
         session.certificate("CertRota"),
-        Err(Error::MalformedPkcs15)
+        Err(Error::MalformedCertificate)
     ));
     assert!(session.certificate("CertFirma").unwrap().is_some());
 }

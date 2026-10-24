@@ -40,7 +40,7 @@ pub enum Error {
     /// The DNIe has its volatile memory erased (ATR ending in `65 81`).
     #[error("the DNIe is burned")]
     BurnedDnie,
-    /// A PKCS#15 directory, or a certificate it lists, cannot be decoded.
+    /// A PKCS#15 directory cannot be decoded.
     #[error("malformed PKCS#15 directory")]
     MalformedPkcs15,
     /// The bytes are not an X.509 certificate.

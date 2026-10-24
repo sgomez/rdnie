@@ -101,7 +101,7 @@ fn location(path: &[u8]) -> Result<Location, Error> {
 
 /// The X.509 certificate a certificate file stores, inflated if compressed.
 pub(crate) fn stored_x509(stored: Vec<u8>) -> Result<Vec<u8>, Error> {
-    x509(&decompressed(stored)).ok_or(Error::MalformedPkcs15)
+    x509(&decompressed(stored)).ok_or(Error::MalformedCertificate)
 }
 
 /// The X.509 certificate at the start of `stored`, without the bytes after it.

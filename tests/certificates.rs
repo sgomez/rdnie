@@ -138,7 +138,7 @@ fn rejects_a_certificate_that_is_not_x509() {
     let certificate = HolderCertificate::not_x509(1, 120);
     assert!(matches!(
         fetch_error(&[certificate]),
-        Error::MalformedPkcs15
+        Error::MalformedCertificate
     ));
 }
 
@@ -147,7 +147,7 @@ fn rejects_a_compressed_certificate_that_is_not_x509() {
     let certificate = HolderCertificate::not_x509(1, 300).compressed();
     assert!(matches!(
         fetch_error(&[certificate]),
-        Error::MalformedPkcs15
+        Error::MalformedCertificate
     ));
 }
 
@@ -158,7 +158,7 @@ fn rejects_a_compressed_certificate_that_inflates_past_the_cap() {
     assert!(stored.len() < 1024, "bomb stored in {} bytes", stored.len());
     // Inflated whole, the bomb is a valid certificate: only the cap can refuse it.
     assert!(<x509_cert::Certificate as x509_cert::der::Decode>::from_der(&bomb.der).is_ok());
-    assert!(matches!(fetch_error(&[bomb]), Error::MalformedPkcs15));
+    assert!(matches!(fetch_error(&[bomb]), Error::MalformedCertificate));
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn rejects_a_compressed_certificate_that_inflates_one_byte_past_the_cap() {
     let certificate = compressed_of_length(16 * 1024 + 1);
     assert!(matches!(
         fetch_error(&[certificate]),
-        Error::MalformedPkcs15
+        Error::MalformedCertificate
     ));
 }
 
@@ -255,7 +255,7 @@ fn one_bad_certificate_fails_only_its_fetch() {
         assert!(!session.certificates().unwrap().is_empty());
         assert!(matches!(
             session.certificate("Cert2"),
-            Err(Error::MalformedPkcs15)
+            Err(Error::MalformedCertificate)
         ));
         assert!(session.certificate("Cert1").unwrap().is_some());
     }

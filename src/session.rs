@@ -96,8 +96,9 @@ impl<T: Transport> Session<T> {
     /// # Errors
     ///
     /// Those of [`Session::open`], [`Error::Status`] if the CDF or the certificate file cannot be
-    /// read and [`Error::MalformedPkcs15`] if the CDF cannot be decoded, the certificate has no
-    /// file in its path or its bytes are not an X.509 certificate.
+    /// read, [`Error::MalformedPkcs15`] if the CDF cannot be decoded or the certificate has no
+    /// file in its path and [`Error::MalformedCertificate`] if its bytes are not an X.509
+    /// certificate.
     pub fn certificate(&mut self, label: &str) -> Result<Option<Vec<u8>>, Error> {
         if let Some(der) = self.ders.get(label) {
             return Ok(Some(der.clone()));
