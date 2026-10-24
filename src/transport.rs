@@ -41,9 +41,10 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-use zeroize::Zeroize;
-
-use crate::{Command, Error, Response, StatusWord};
+use crate::{
+    Command, Error, Response, StatusWord,
+    resend::{Resends, short_le},
+};
 
 /// Channel the APDUs travel through: PC/SC in production, an emulator in tests.
 ///
@@ -99,64 +100,38 @@ pub trait Transport {
     /// Those of [`Transport::transmit_raw`], [`Command::to_bytes`] and [`Response::parse`], and
     /// [`Error::Status`] with the last status word if the card keeps asking past a bound.
     fn transmit(&mut self, command: &Command) -> Result<Response, Error> {
-        let mut resent = None;
-        let result = follow(self, command, &mut resent);
-        if let Some(mut copy) = resent {
-            copy.data.zeroize();
-        }
-        result
-    }
-}
-
-/// Keeps the latest resent copy in `resent`, so the caller wipes it on every exit.
-fn follow<T: Transport + ?Sized>(
-    transport: &mut T,
-    command: &Command,
-    resent: &mut Option<Command>,
-) -> Result<Response, Error> {
-    let mut data = Vec::new();
-    let mut get_responses = 0;
-    let mut resends = 0;
-    let mut channel_dropped = false;
-    loop {
-        let sent = resent.as_ref().unwrap_or(command);
-        let response = Response::parse(&transport.transmit_raw(&sent.to_bytes()?)?)?;
-        if response.status == SM_DATA_MISSING && sent.cla == PLAIN_CLA {
-            if channel_dropped {
+        let mut data = Vec::new();
+        let mut get_responses = 0;
+        let mut resends = Resends::default();
+        let mut channel_dropped = false;
+        loop {
+            let sent = resends.current(command);
+            let response = Response::parse(&self.transmit_raw(&sent.to_bytes()?)?)?;
+            let plain = sent.cla == PLAIN_CLA;
+            if response.status == SM_DATA_MISSING && plain {
+                if channel_dropped {
+                    return Err(Error::Status(response.status));
+                }
+                channel_dropped = true;
+                continue;
+            }
+            if Resends::is_wrong_length(response.status) && plain {
+                resends.resend_with_le(command, response.status)?;
+                continue;
+            }
+            data.extend(response.data);
+            let [sw1, sw2] = response.status.0.to_be_bytes();
+            if sw1 != RESPONSE_PENDING {
+                return Ok(Response {
+                    data,
+                    status: response.status,
+                });
+            }
+            if get_responses == MAX_GET_RESPONSES {
                 return Err(Error::Status(response.status));
             }
-            channel_dropped = true;
-            continue;
-        }
-        let [sw1, sw2] = response.status.0.to_be_bytes();
-        if sw1 == WRONG_LENGTH && sent.cla == PLAIN_CLA {
-            if resends == MAX_RESENDS {
-                return Err(Error::Status(response.status));
-            }
-            resends += 1;
-            let next = Command {
-                le: Some(short_le(sw2)),
-                ..sent.clone()
-            };
-            if let Some(mut old) = resent.replace(next) {
-                old.data.zeroize();
-            }
-            continue;
-        }
-        resends = 0;
-        data.extend(response.data);
-        if sw1 != RESPONSE_PENDING {
-            return Ok(Response {
-                data,
-                status: response.status,
-            });
-        }
-        if get_responses == MAX_GET_RESPONSES {
-            return Err(Error::Status(response.status));
-        }
-        get_responses += 1;
-        if let Some(mut old) = resent.replace(get_response(sw2)) {
-            old.data.zeroize();
+            get_responses += 1;
+            resends.replace_with(get_response(sw2));
         }
     }
 }
@@ -165,8 +140,6 @@ const RESPONSE_PENDING: u8 = 0x61;
 // A DNIe answers it to the first plain command after a leftover secure channel, and drops it.
 const SM_DATA_MISSING: StatusWord = StatusWord(0x6987);
 const MAX_GET_RESPONSES: usize = 256;
-pub(crate) const MAX_RESENDS: usize = 2;
-pub(crate) const WRONG_LENGTH: u8 = 0x6C;
 // Protected commands are resent by the secure channel, not here.
 const PLAIN_CLA: u8 = 0x00;
 
@@ -178,12 +151,5 @@ fn get_response(le: u8) -> Command {
         p2: 0x00,
         data: vec![],
         le: Some(short_le(le)),
-    }
-}
-
-pub(crate) fn short_le(le: u8) -> u16 {
-    match le {
-        0 => 256,
-        le => le.into(),
     }
 }
