@@ -20,6 +20,7 @@ fn open(card: EmulatedDnie) -> Session<EmulatedDnie> {
 
 fn sign(session: &mut Session<EmulatedDnie>, label: &str, pin: &str) -> Result<Vec<u8>, Error> {
     let key = session.private_key(label).unwrap().unwrap();
+    session.pin_retries_left()?;
     session.sign(
         &Sha256::digest(b"document"),
         DigestAlgorithm::Sha256,

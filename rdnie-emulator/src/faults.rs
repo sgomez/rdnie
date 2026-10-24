@@ -173,6 +173,11 @@ impl EmulatedDnie {
         self.presence = Presence::Removed;
     }
 
+    /// Burns one PIN retry now, as another program failing the PIN between two operations would.
+    pub fn burn_a_retry(&mut self) {
+        self.retries = self.retries.saturating_sub(1);
+    }
+
     /// Resets the card on the next protected command, which the transport reports.
     pub fn resetting_mid_channel(mut self) -> Self {
         self.fault = Some(Fault::Reset);

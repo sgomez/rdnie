@@ -96,6 +96,7 @@ fn rejects_a_malformed_pin_without_any_apdu() {
     for pin in ["short", "ñandú", too_long.as_str()] {
         let mut session = open(signing_card());
         let key = first_key(&mut session);
+        session.pin_retries_left().unwrap();
         let sent = session.transport.commands();
         let result = session.sign(
             &[0; 32],
@@ -241,6 +242,7 @@ pub(super) fn pin_transactions_since(card: &EmulatedDnie, from: usize) -> Vec<us
 fn signs_after_a_wrong_pin_expecting_the_retries_it_reported() {
     let mut session = open(signing_card());
     let key = first_key(&mut session);
+    session.pin_retries_left().unwrap();
     let wrong = Pin::new("WrongPin1".to_owned());
     let result = session.sign(&[0; 32], DigestAlgorithm::Sha256, &key, wrong);
     assert!(matches!(result, Err(Error::WrongPin { retries_left: 2 })));
@@ -250,7 +252,7 @@ fn signs_after_a_wrong_pin_expecting_the_retries_it_reported() {
 }
 
 #[test]
-fn a_failed_retries_read_leaves_the_shown_count_in_force() {
+fn a_failed_retries_read_leaves_the_expected_count_in_force() {
     let mut session = open(signing_card());
     let key = first_key(&mut session);
     assert_eq!(session.pin_retries_left().unwrap(), 3);
@@ -263,4 +265,12 @@ fn a_failed_retries_read_leaves_the_shown_count_in_force() {
         .sign(&[0; 32], DigestAlgorithm::Sha256, &key, pin)
         .unwrap();
     assert_eq!(pin_transactions_since(&session.transport, before).len(), 1);
+}
+
+#[test]
+fn the_emulator_burns_a_retry_on_demand() {
+    let mut session = open(signing_card());
+    assert_eq!(session.pin_retries_left().unwrap(), 3);
+    session.transport.burn_a_retry();
+    assert_eq!(session.pin_retries_left().unwrap(), 2);
 }

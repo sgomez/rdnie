@@ -23,6 +23,7 @@ fn signs_digests_that_verify_with_the_certificate() {
     let mut session = open(signing_card());
     let certificate = session.certificate("Cert1").unwrap().unwrap();
     for (algorithm, scheme, digest) in cases {
+        session.pin_retries_left().unwrap();
         let signature = sign_with(&mut session, &digest, algorithm).unwrap();
         verify(&certificate, scheme, &digest, &signature);
     }
@@ -32,6 +33,7 @@ fn signs_digests_that_verify_with_the_certificate() {
 fn rejects_a_digest_of_another_length_before_any_apdu() {
     let mut session = open(signing_card());
     let key = first_key(&mut session);
+    session.pin_retries_left().unwrap();
     let sent = session.transport.commands();
     let result = session.sign(
         &[0; 48],
@@ -52,6 +54,7 @@ fn rejects_a_digest_of_another_length_before_any_apdu() {
 #[test]
 fn verifies_the_pin_in_a_fresh_transaction_after_reading_the_retries() {
     let mut session = open(signing_card());
+    session.pin_retries_left().unwrap();
     sign_with(&mut session, &[0; 32], DigestAlgorithm::Sha256).unwrap();
     let queries = session.transport.pin_queries();
     let read = queries.iter().find(|query| !query.with_pin).unwrap();
@@ -77,6 +80,7 @@ fn opens_the_user_channel_inside_the_pin_channel() {
 #[test]
 fn signing_with_a_listed_key_reads_no_certificate_file() {
     let mut session = open(signing_card());
+    session.pin_retries_left().unwrap();
     sign_with(&mut session, &[0; 32], DigestAlgorithm::Sha256).unwrap();
     assert_eq!(certificate_files_selected(&session.transport), []);
 }
@@ -85,6 +89,7 @@ fn signing_with_a_listed_key_reads_no_certificate_file() {
 fn reports_a_wrong_digest_length_before_an_invalid_pin_format() {
     let mut session = open(signing_card());
     let key = first_key(&mut session);
+    session.pin_retries_left().unwrap();
     let result = session.sign(
         &[0; 48],
         DigestAlgorithm::Sha256,

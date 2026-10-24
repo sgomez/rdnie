@@ -106,6 +106,7 @@ fn a_reset_strikes_once() {
 fn a_signing_strike_comes_after_verify() {
     let mut session = open(schedule(Strike::Removal, Step::Signing)).unwrap();
     let key = session.private_key(SIGNATURE_LABEL).unwrap().unwrap();
+    session.pin_retries_left().unwrap();
     let digest = Sha256::digest(b"document");
     let mut sign = |pin: &str| {
         session.sign(
