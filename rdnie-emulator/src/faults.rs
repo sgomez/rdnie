@@ -29,8 +29,6 @@ pub enum Delivery {
     ExactLe,
     /// Answers `61xx` to the command and to every `GET RESPONSE`.
     EndlessPending,
-    /// Answers `6Cxx` to every command, whatever its Le.
-    EndlessWrongLength,
 }
 
 /// A step of the handshake the card fails.

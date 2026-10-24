@@ -256,7 +256,6 @@ impl EmulatedDnie {
             Delivery::ExactLe if le == Some(data.len()) => with_status(data, 0x9000),
             Delivery::ExactLe => vec![0x6C, length_byte(data.len())],
             Delivery::EndlessPending => vec![0x61, 0x05],
-            Delivery::EndlessWrongLength => vec![0x6C, 0x05],
         }
     }
 

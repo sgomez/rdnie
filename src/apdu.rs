@@ -72,7 +72,7 @@ impl fmt::Display for StatusWord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     /// Data without the status word.
-    pub(crate) data: Vec<u8>,
+    pub data: Vec<u8>,
     /// Status word.
     pub status: StatusWord,
 }

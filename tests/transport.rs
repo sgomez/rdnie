@@ -12,6 +12,6 @@ fn a_recorder_runs_its_transactions_in_the_card_s() {
     let recorder = Session::open(Recorder::new(EmulatedDnie::new(&DNIE_3_ATR)))
         .unwrap()
         .into_transport();
-    assert!(!recorder.exchanges.is_empty());
+    assert_ne!(recorder.exchanges, []);
     assert!(recorder.card.transactions() > 0);
 }
