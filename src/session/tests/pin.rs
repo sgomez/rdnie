@@ -212,3 +212,55 @@ fn aborts_before_verify_when_no_retry_is_left() {
     assert!(matches!(result, Err(Error::PinBlocked)));
     assert!(card.pin_queries().iter().all(|query| !query.with_pin));
 }
+
+#[test]
+fn reports_a_blocked_pin_when_the_reread_finds_no_retry_left() {
+    let mut session = open(signing_card());
+    let key = session.certificates().unwrap().remove(0).key;
+    assert_eq!(session.pin_retries().unwrap(), 3);
+    let card = std::mem::replace(&mut session.transport, EmulatedDnie::new(&DNIE_3_ATR));
+    session.transport = card.answering_retries_with(0x63C0);
+    let pin = Pin::new(DEFAULT_PIN.to_owned());
+    let result = session.sign(&[0; 32], HashAlgorithm::Sha256, &key, pin);
+    assert!(matches!(result, Err(Error::PinBlocked)));
+    let card = session.into_transport();
+    assert!(card.pin_queries().iter().all(|query| !query.with_pin));
+}
+
+/// The transactions the card's `VERIFY`s arrived in, from the `from`th on.
+fn pin_transactions_since(card: &EmulatedDnie, from: usize) -> Vec<usize> {
+    let mut transactions: Vec<usize> = card.pin_queries()[from..]
+        .iter()
+        .map(|query| query.transaction)
+        .collect();
+    transactions.dedup();
+    transactions
+}
+
+#[test]
+fn signs_after_a_wrong_pin_expecting_the_retries_it_reported() {
+    let mut session = open(signing_card());
+    let key = session.certificates().unwrap().remove(0).key;
+    let wrong = Pin::new("WrongPin1".to_owned());
+    let result = session.sign(&[0; 32], HashAlgorithm::Sha256, &key, wrong);
+    assert!(matches!(result, Err(Error::WrongPin { retries_left: 2 })));
+    let before = session.transport.pin_queries().len();
+    sign_with(&mut session, &[0; 32], HashAlgorithm::Sha256).unwrap();
+    assert_eq!(pin_transactions_since(&session.transport, before).len(), 1);
+}
+
+#[test]
+fn a_failed_retries_read_leaves_the_shown_count_in_force() {
+    let mut session = open(signing_card());
+    let key = session.certificates().unwrap().remove(0).key;
+    assert_eq!(session.pin_retries().unwrap(), 3);
+    let card = std::mem::replace(&mut session.transport, EmulatedDnie::new(&DNIE_3_ATR));
+    session.transport = card.resetting_card_at(Step::PinRetries);
+    assert!(matches!(session.pin_retries(), Err(Error::CardReset)));
+    let before = session.transport.pin_queries().len();
+    let pin = Pin::new(DEFAULT_PIN.to_owned());
+    session
+        .sign(&[0; 32], HashAlgorithm::Sha256, &key, pin)
+        .unwrap();
+    assert_eq!(pin_transactions_since(&session.transport, before).len(), 1);
+}
