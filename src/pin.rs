@@ -46,8 +46,7 @@ const RETRIES_MASK: u8 = 0xF0;
 const RETRIES_TAG: u8 = 0xC0;
 const BLOCKED: StatusWord = StatusWord(0x6983);
 
-/// The never-blind PIN policy: the card authenticator and the retries count last shown, which the
-/// next verified operation expects.
+/// The never-blind PIN policy: the retries last shown are what the next verified operation expects.
 pub(crate) struct PinGuard {
     authenticator: CardAuthenticator,
     shown: Option<u8>,
@@ -65,16 +64,14 @@ impl PinGuard {
         self.authenticator.key_generation()
     }
 
-    /// Reads the retries in their own transaction and records them as shown; a failed read
-    /// leaves the count shown before.
+    /// Reads the retries in their own transaction and records them as shown unless the read fails.
     pub(crate) fn read_retries(&mut self, transport: &mut impl Transport) -> Result<u8, Error> {
         let retries = self.query(transport)?;
         self.shown = Some(retries);
         Ok(retries)
     }
 
-    /// Sends `pin` once, after rereading the retries shown, and runs `work` over the user channel,
-    /// all in one transaction; the retries are read first in their own if none were shown.
+    /// Checks the retries shown, sends `pin` once and runs `work`, all in one transaction.
     pub(crate) fn verified<R>(
         &mut self,
         transport: &mut impl Transport,
