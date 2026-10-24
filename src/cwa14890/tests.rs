@@ -248,6 +248,10 @@ impl Transport for AcceptingCard {
         Ok(vec![0x90, 0x00])
     }
 
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        Ok(vec![])
+    }
+
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         Ok(vec![])
     }

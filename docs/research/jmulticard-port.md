@@ -126,8 +126,8 @@ The comparison is a plain lexicographic `String.compareTo`. Distinct material to
   - Microsoft documents that a transaction idle for more than 5 s gets the card reset. So **never hold a transaction while waiting for the PIN**. Read the counter in one transaction, ask for the PIN outside it, then reopen the channel, re-read the counter and VERIFY in another.
   - Try `SHARE_EXCLUSIVE` only as a probe: it fails while CertPropSvc holds the card.
 - On **Linux** (OpenSC with its DNIe driver, via p11-kit/NSS) and **macOS** (an OpenSC CTK token, if installed), the same contention exists. It is less aggressive because nobody opens the card on insertion unless asked.
-- **Reset or no reset at the start?** A reset is robust but kills other apps' sessions. Without one, it is unknown whether a plain `SELECT` is accepted while another app's channel is open. Decide on the real card.
-- **Close as JMulticard.** rdnie resets only when the session opens; operations never reset, and closing leaves the card (`LEAVE_CARD`).
+- **Reset or no reset at the start?** Decided: no reset (see `docs/parity.md`, "DnieFactory.getDnie reset on start"). With another app's channel open, the card answers a plain `SELECT` `69 87` once and then accepts it (#133, #138).
+- **Close as JMulticard.** rdnie never resets the card on its own, and closing leaves the card (`LEAVE_CARD`).
 - **Transport seam.** The `Transport` trait today only has `transmit_raw`. It needs reset, a transaction scope, and the 61xx/6Cxx/GET RESPONSE handling below the SM layer. The emulator must implement all three.
 
 ### What only the real card can validate
@@ -170,4 +170,4 @@ Open questions for the spec:
 - Should we verify the ICC certificate?
 - Should DNIe 1.0/2.0 stay out for good?
 - Should rdnie hash, or only accept digests?
-- Reset or no reset when the session starts?
+- Reset or no reset when the session starts? No reset: see `docs/parity.md`, "DnieFactory.getDnie reset on start".

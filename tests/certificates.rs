@@ -1,4 +1,4 @@
-//! The holder's certificates are listed without a PIN.
+//! The holder's certificates are listed and fetched without a PIN.
 
 use rdnie::{Error, Session};
 use rdnie_emulator::{
@@ -6,12 +6,12 @@ use rdnie_emulator::{
 };
 
 fn assert_lists(card: EmulatedDnie, expected: &[Vec<u8>]) {
-    let listed: Vec<Vec<u8>> = Session::open(card)
-        .unwrap()
+    let mut session = Session::open(card).unwrap();
+    let listed: Vec<Vec<u8>> = session
         .certificates()
         .unwrap()
         .into_iter()
-        .map(|certificate| certificate.der)
+        .map(|certificate| session.certificate(&certificate.label).unwrap().unwrap())
         .collect();
     let lengths = |ders: &[Vec<u8>]| ders.iter().map(Vec::len).collect::<Vec<_>>();
     assert!(
@@ -107,28 +107,48 @@ fn load_error(certificates: &[HolderCertificate]) -> Error {
     Session::open(card).unwrap().certificates().unwrap_err()
 }
 
+/// The error fetching `Cert1`, after a listing that succeeds.
+fn fetch_error(certificates: &[HolderCertificate]) -> Error {
+    let card = EmulatedDnie::new(&DNIE_3_ATR).with_certificates(certificates);
+    let mut session = Session::open(card).unwrap();
+    session.certificates().unwrap();
+    session.certificate("Cert1").unwrap_err()
+}
+
 #[test]
 fn rejects_a_certificate_with_an_empty_path() {
     let certificate = HolderCertificate::new(1, 120).listed_at(&[]);
-    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+    assert!(matches!(
+        fetch_error(&[certificate]),
+        Error::MalformedPkcs15
+    ));
 }
 
 #[test]
 fn rejects_a_certificate_whose_path_is_only_the_master_file() {
     let certificate = HolderCertificate::new(1, 120).listed_at(&[0x3F, 0x00]);
-    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+    assert!(matches!(
+        fetch_error(&[certificate]),
+        Error::MalformedPkcs15
+    ));
 }
 
 #[test]
 fn rejects_a_certificate_that_is_not_x509() {
     let certificate = HolderCertificate::not_x509(1, 120);
-    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+    assert!(matches!(
+        fetch_error(&[certificate]),
+        Error::MalformedPkcs15
+    ));
 }
 
 #[test]
 fn rejects_a_compressed_certificate_that_is_not_x509() {
     let certificate = HolderCertificate::not_x509(1, 300).compressed();
-    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+    assert!(matches!(
+        fetch_error(&[certificate]),
+        Error::MalformedPkcs15
+    ));
 }
 
 #[test]
@@ -138,7 +158,7 @@ fn rejects_a_compressed_certificate_that_inflates_past_the_cap() {
     assert!(stored.len() < 1024, "bomb stored in {} bytes", stored.len());
     // Inflated whole, the bomb is a valid certificate: only the cap can refuse it.
     assert!(<x509_cert::Certificate as x509_cert::der::Decode>::from_der(&bomb.der).is_ok());
-    assert!(matches!(load_error(&[bomb]), Error::MalformedPkcs15));
+    assert!(matches!(fetch_error(&[bomb]), Error::MalformedPkcs15));
 }
 
 #[test]
@@ -182,7 +202,10 @@ fn loads_a_compressed_certificate_that_inflates_to_exactly_the_cap() {
 #[test]
 fn rejects_a_compressed_certificate_that_inflates_one_byte_past_the_cap() {
     let certificate = compressed_of_length(16 * 1024 + 1);
-    assert!(matches!(load_error(&[certificate]), Error::MalformedPkcs15));
+    assert!(matches!(
+        fetch_error(&[certificate]),
+        Error::MalformedPkcs15
+    ));
 }
 
 fn labels(certificates: &[HolderCertificate]) -> Vec<String> {
@@ -221,17 +244,21 @@ fn debug_output_hides_the_label() {
 }
 
 #[test]
-fn one_bad_certificate_fails_the_whole_load() {
-    let certificates = [
-        HolderCertificate::new(1, 120),
+fn one_bad_certificate_fails_only_its_fetch() {
+    for bad in [
         HolderCertificate::not_x509(2, 120),
-    ];
-    assert!(matches!(load_error(&certificates), Error::MalformedPkcs15));
-    let keyless = [
-        HolderCertificate::new(1, 120),
         HolderCertificate::not_x509(2, 120).without_key(),
-    ];
-    assert!(matches!(load_error(&keyless), Error::MalformedPkcs15));
+    ] {
+        let card = EmulatedDnie::new(&DNIE_3_ATR)
+            .with_certificates(&[HolderCertificate::new(1, 120), bad]);
+        let mut session = Session::open(card).unwrap();
+        assert!(!session.certificates().unwrap().is_empty());
+        assert!(matches!(
+            session.certificate("Cert2"),
+            Err(Error::MalformedPkcs15)
+        ));
+        assert!(session.certificate("Cert1").unwrap().is_some());
+    }
 }
 
 fn fetch(certificates: &[HolderCertificate], label: &str) -> Option<Vec<u8>> {
@@ -266,7 +293,7 @@ fn lists_and_fetches_the_signature_certificate_by_its_public_label() {
 }
 
 #[test]
-fn fetches_a_keyed_certificate_with_the_der_it_is_listed_with() {
+fn fetches_a_keyed_certificate_by_its_label() {
     let certificate = HolderCertificate::new(1, 120).labelled("CertFirma");
     assert_eq!(
         fetch(std::slice::from_ref(&certificate), "CertFirma"),

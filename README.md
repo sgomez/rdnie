@@ -44,7 +44,7 @@ fn main() -> Result<(), rdnie::Error> {
 }
 ```
 
-`certificate.der` holds each X.509 certificate, and `Holder::from_der` reads the holder's data from it.
+`certificates` reads no certificate file: signing needs only the key. `session.certificate(label)` reads that one X.509 certificate on first request and keeps it for the session, and `Holder::from_der` reads the holder's data from it.
 
 ## The PIN
 

@@ -42,19 +42,22 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-//! Session with a DNIe 3.0/4.0, opened as `DnieFactory.getDnie` and `Dnie3` do: reset, classify
-//! the ATR, read the IDESP.
+//! Session with a DNIe 3.0/4.0, opened as `DnieFactory.getDnie` and `Dnie3` do, minus the reset:
+//! classify the ATR, read the IDESP.
+
+use std::collections::BTreeMap;
 
 use crate::{
-    Certificate, Error, HashAlgorithm, KeyReference, Pin, Transport,
+    Certificate, Error, HashAlgorithm, KeyReference, Pin, StatusWord, Transport,
     atr::check_dnie_3,
     certificates,
     files::{self, Location},
     key_sets::{ComponentRoots, KeyGeneration},
-    pin, signature,
+    pin, pkcs15, signature,
 };
 
 const IDESP: &[u8] = &[0x3F, 0x00, 0x00, 0x06];
+const FILE_NOT_FOUND: StatusWord = StatusWord(0x6A82);
 
 /// Session with a DNIe 3.0/4.0 over any [`Transport`].
 ///
@@ -67,17 +70,22 @@ pub struct Session<T: Transport> {
     roots: ComponentRoots,
     /// The count [`Session::pin_retries`] last showed, which the next sign expects.
     shown_retries: Option<u8>,
-    /// Every CDF certificate, loaded on the first request and kept for the session.
-    loaded: Option<Vec<certificates::Loaded>>,
+    /// The CDF, the PrKDF and the DER of each label, each read on first request and then kept.
+    cdf: Option<Vec<pkcs15::Entry>>,
+    prkdf: Option<Vec<pkcs15::Entry>>,
+    ders: BTreeMap<String, Vec<u8>>,
 }
 
 impl<T: Transport> Session<T> {
-    /// Resets the card, accepts it only if it is a DNIe 3.0/4.0 and reads its IDESP if it can.
+    /// Accepts the card only if its current ATR is a DNIe 3.0/4.0 and reads its IDESP, without
+    /// resetting it. A card without an IDESP, or with an empty one, takes the second generation.
     ///
     /// # Errors
     ///
-    /// Those of [`Transport::transaction`], [`Transport::reset`], [`Error::NotDnie`],
-    /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`].
+    /// Those of [`Transport::transaction`], [`Transport::atr`], [`Error::NotDnie`],
+    /// [`Error::LegacyDnie`] and [`Error::BurnedDnie`], and any failure reading the IDESP but its
+    /// absence. A card reset by another application since `connect` fails with
+    /// [`Error::CardReset`]: reconnect and open again.
     pub fn open(transport: T) -> Result<Self, Error> {
         Self::open_with(transport, ComponentRoots::embedded())
     }
@@ -99,55 +107,54 @@ impl<T: Transport> Session<T> {
     }
 
     fn open_with(mut transport: T, roots: ComponentRoots) -> Result<Self, Error> {
-        check_dnie_3(&transport.reset()?)?;
-        let idesp = transport.transaction(|card| Ok(read_idesp(card)))?;
+        check_dnie_3(&transport.atr()?)?;
+        let idesp = transport.transaction(read_idesp)?;
         Ok(Self {
             transport,
             idesp,
             roots,
             shown_retries: None,
-            loaded: None,
+            cdf: None,
+            prkdf: None,
+            ders: BTreeMap::new(),
         })
     }
 
-    /// Lists the holder's certificates that have a private key, each with its PKCS#15 label,
-    /// without a PIN. The first call loads every CDF certificate from the card and the session
-    /// keeps them, so later calls send nothing; a failed load keeps nothing.
+    /// Lists the holder's certificates that have a private key, each with its PKCS#15 label and
+    /// key, without a PIN and without reading any certificate file. The session keeps the CDF
+    /// and the PrKDF from their first read; a failed read keeps nothing of that file.
     ///
     /// # Errors
     ///
-    /// Those of [`Session::open`], [`Error::Status`] if a file cannot be read and
-    /// [`Error::MalformedPkcs15`] if a directory cannot be decoded, a certificate has no file in
-    /// its path, no UTF-8 label, or its bytes are not an X.509 certificate.
+    /// Those of [`Session::open`], [`Error::Status`] if a directory cannot be read and
+    /// [`Error::MalformedPkcs15`] if it cannot be decoded, a certificate has no UTF-8 label or its
+    /// key has no file in its path.
     pub fn certificates(&mut self) -> Result<Vec<Certificate>, Error> {
-        Ok(self
-            .loaded()?
-            .iter()
-            .filter_map(certificates::Loaded::keyed)
-            .collect())
+        let cdf = cached(&mut self.cdf, &mut self.transport, certificates::cdf)?;
+        let prkdf = cached(&mut self.prkdf, &mut self.transport, certificates::prkdf)?;
+        certificates::keyed(cdf, prkdf)
     }
 
     /// Fetches the DER of the CDF certificate labelled `label`, with or without a private key,
-    /// from the certificates [`Session::certificates`] shares. `None` if no certificate has that
-    /// label; with duplicates the last one in the CDF wins.
+    /// reading only its file, once per session. `None` if no certificate has that label; with
+    /// duplicates the last one in the CDF wins.
     ///
     /// # Errors
     ///
-    /// Those of [`Session::certificates`].
+    /// Those of [`Session::open`], [`Error::Status`] if the CDF or the certificate file cannot be
+    /// read and [`Error::MalformedPkcs15`] if the CDF cannot be decoded, the certificate has no
+    /// file in its path or its bytes are not an X.509 certificate.
     pub fn certificate(&mut self, label: &str) -> Result<Option<Vec<u8>>, Error> {
-        Ok(self
-            .loaded()?
-            .iter()
-            .rev()
-            .find(|loaded| loaded.label == label)
-            .map(|loaded| loaded.der.clone()))
-    }
-
-    fn loaded(&mut self) -> Result<&[certificates::Loaded], Error> {
-        if self.loaded.is_none() {
-            self.loaded = Some(operation(&mut self.transport, certificates::load)?);
+        if let Some(der) = self.ders.get(label) {
+            return Ok(Some(der.clone()));
         }
-        Ok(self.loaded.as_deref().unwrap_or_default())
+        let cdf = cached(&mut self.cdf, &mut self.transport, certificates::cdf)?;
+        let Some(entry) = cdf.iter().rev().find(|entry| entry.label == label) else {
+            return Ok(None);
+        };
+        let der = operation(&mut self.transport, |card| certificates::read(card, entry))?;
+        self.ders.insert(label.to_owned(), der.clone());
+        Ok(Some(der))
     }
 
     /// Reads how many PIN attempts are left through the PIN channel, without sending a PIN.
@@ -223,11 +230,28 @@ fn operation<R>(
     transport.transaction(body)
 }
 
-/// The IDESP in clear, or `None` if the card does not give it, as `Dnie3` leaves it.
-fn read_idesp(card: &mut dyn Transport) -> Option<String> {
-    let location = Location::new(IDESP)?;
-    let idesp = files::read(card, &location).ok()?;
-    (!idesp.is_empty()).then(|| String::from_utf8_lossy(&idesp).into_owned())
+/// The value in `slot`, read in its own operation if the slot is empty.
+fn cached<'a, R>(
+    slot: &'a mut Option<R>,
+    transport: &mut impl Transport,
+    read: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+) -> Result<&'a R, Error> {
+    let value = match slot.take() {
+        Some(value) => value,
+        None => operation(transport, read)?,
+    };
+    Ok(slot.insert(value))
+}
+
+/// The IDESP in clear, or `None` if the card has no IDESP file or it is empty.
+fn read_idesp(card: &mut dyn Transport) -> Result<Option<String>, Error> {
+    let location = Location::new(IDESP).expect("the IDESP path is valid");
+    let idesp = match files::read(card, &location) {
+        Ok(idesp) => idesp,
+        Err(Error::Status(FILE_NOT_FOUND)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok((!idesp.is_empty()).then(|| String::from_utf8_lossy(&idesp).into_owned()))
 }
 
 #[cfg(test)]

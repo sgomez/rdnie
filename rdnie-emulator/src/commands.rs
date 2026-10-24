@@ -209,6 +209,7 @@ impl EmulatedDnie {
                 let answer = self.deliver(fci, apdu.le);
                 // A `6Cxx` asks for the SELECT again, so the card stays where it was.
                 if !matches!(answer.as_slice(), [0x6C, _]) {
+                    self.selected.push(path.clone());
                     self.current = path;
                 }
                 answer
@@ -274,6 +275,21 @@ impl EmulatedDnie {
     }
 }
 
+impl EmulatedDnie {
+    /// Drops what a reset clears, whoever caused it.
+    pub(crate) fn power_cycle(&mut self) {
+        self.pending.clear();
+        self.current.clear();
+        self.channel = None;
+        self.user_channel = false;
+        self.pin_verified = false;
+        self.signing_key = None;
+        if let Some(chip) = &mut self.chip {
+            chip.reset();
+        }
+    }
+}
+
 impl Transport for EmulatedDnie {
     fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         if self.presence == Presence::Removed {
@@ -287,7 +303,7 @@ impl Transport for EmulatedDnie {
             }
             return match self.fault.take() {
                 Some(Fault::Reset) => {
-                    self.reset()?;
+                    self.power_cycle();
                     Err(Error::CardReset)
                 }
                 Some(Fault::ChannelLost) => {
@@ -308,39 +324,42 @@ impl Transport for EmulatedDnie {
         };
         if apdu.ins == EXTERNAL_AUTHENTICATE {
             if self.faulty(HandshakeFault::ResettingOnExternalAuthenticate) {
-                self.reset()?;
+                self.power_cycle();
                 return Err(Error::CardReset);
             }
             if self.faulty(HandshakeFault::FailingOnExternalAuthenticate) {
                 return Err(Error::Transport("reader unplugged".to_owned()));
             }
         }
+        if apdu.ins == SELECT && apdu.data == IDESP && self.current.is_empty() {
+            self.strike(Step::Opening)?;
+        }
         if apdu.ins == SELECT && apdu.data == pkcs15::CDF[1] && self.current == [pkcs15::CDF[0]] {
             self.strike(Step::Certificates)?;
         }
         if apdu.ins != GET_RESPONSE {
             self.pending.clear();
-            self.channel = None;
+            // As a real DNIe, the first plain command in a channel gets `69 87` and drops the channel.
+            if self.channel.take().is_some() {
+                return Ok(vec![0x69, 0x87]);
+            }
         }
         Ok(self.answer(&apdu))
+    }
+
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        if self.presence == Presence::Removed {
+            return Err(Error::CardRemoved);
+        }
+        Ok(self.atr.clone())
     }
 
     fn reset(&mut self) -> Result<Vec<u8>, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
         }
-        if self.scheduled.contains(&(Step::Opening, Strike::Removal)) {
-            self.strike(Step::Opening)?;
-        }
-        self.pending.clear();
-        self.current.clear();
-        self.channel = None;
-        self.user_channel = false;
-        self.pin_verified = false;
-        self.signing_key = None;
-        if let Some(chip) = &mut self.chip {
-            chip.reset();
-        }
+        self.resets += 1;
+        self.power_cycle();
         Ok(self.atr.clone())
     }
 
@@ -350,9 +369,6 @@ impl Transport for EmulatedDnie {
     ) -> Result<R, Error> {
         if self.presence == Presence::Removed {
             return Err(Error::CardRemoved);
-        }
-        if self.transactions == 0 {
-            self.strike(Step::Opening)?;
         }
         self.transactions += 1;
         if self.retry_lost_between_transactions && !self.pin_queries.is_empty() {

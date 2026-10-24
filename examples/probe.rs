@@ -1,13 +1,24 @@
 //! Manual probe for the card's holder: prints ATR, status words, labels, counts and pass/fail only;
 //! `--verbose` also prints the holder's data, which must never leave the machine.
 //! `--list` prints the reader names and stops; `--reader <name>` connects to that reader.
+//! Every card step prints its elapsed time; a failing one prints its status word, and a failed
+//! IDESP read prints the one it got.
+//!
+//! Checking that opening a session does not reset the card:
+//!
+//! 1. With Firefox (through `OpenSC`) logged in with the DNIe, run the probe, then confirm Firefox
+//!    still works with the card.
+//! 2. Run `--leave-channel` twice in a row: it opens a session, runs `pin_retries()`, leaves its
+//!    channel open and exits without a reset, so the second run starts on a card with a leftover
+//!    channel and must still pass.
 
 use rdnie::{
     Certificate, Error, HashAlgorithm, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration, PcscTransport,
-    Pin, Session, describe_atr,
+    Pin, SIGNATURE_LABEL, Session, Transport, describe_atr,
 };
 use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
 use sha2_010::{Digest, Sha256};
+use std::time::Instant;
 use x509_cert::{
     der::{Decode, Encode},
     ext::pkix::{KeyUsage, KeyUsages},
@@ -39,8 +50,21 @@ fn run() -> Result<(), Error> {
     let atr = transport.atr()?;
     println!("{}", describe_atr(&atr));
 
-    let mut session = Session::open(transport)?;
+    let mut session = timed("open", || Session::open(transport)).inspect_err(|error| {
+        if let Error::Status(status) = error {
+            println!("IDESP read: fail ({status})");
+        }
+    })?;
     println!("card: DNIe 3.0/4.0");
+    if arguments
+        .iter()
+        .any(|argument| argument == "--leave-channel")
+    {
+        let retries = timed("pin_retries", || session.pin_retries())?;
+        println!("retries: {retries}");
+        println!("left the channel open, no reset");
+        return Ok(());
+    }
     let key_set = match session.key_generation() {
         KeyGeneration::First => "r1",
         KeyGeneration::Second => "r2",
@@ -48,16 +72,22 @@ fn run() -> Result<(), Error> {
     };
     println!("key set: {key_set}");
 
-    let certificates = session.certificates()?;
-    println!("certificates: {}", certificates.len());
-    for certificate in &certificates {
-        println!("label: {}", certificate.label);
-        holder(
-            &certificate.der,
-            std::env::args().any(|argument| argument == "--verbose"),
-        );
-    }
-    let intermediate = session.certificate(INTERMEDIATE_CA_LABEL)?;
+    let listed = timed("certificates", || session.certificates())?;
+    println!("certificates: {}", listed.len());
+    let signature = timed("certificate (signature)", || {
+        session.certificate(SIGNATURE_LABEL)
+    })?;
+    println!(
+        "signature certificate: {}",
+        if signature.is_some() {
+            "pass"
+        } else {
+            "fail (not found)"
+        }
+    );
+    let intermediate = timed("certificate (intermediate CA)", || {
+        session.certificate(INTERMEDIATE_CA_LABEL)
+    })?;
     println!(
         "intermediate CA: {}",
         match intermediate {
@@ -67,7 +97,20 @@ fn run() -> Result<(), Error> {
         }
     );
 
-    match session.pin_retries() {
+    let mut certificates = Vec::with_capacity(listed.len());
+    for certificate in listed {
+        println!("label: {}", certificate.label);
+        let Some(der) = session.certificate(&certificate.label)? else {
+            println!("  certificate: fail (not found)");
+            continue;
+        };
+        holder(
+            &der,
+            std::env::args().any(|argument| argument == "--verbose"),
+        );
+        certificates.push((certificate, der));
+    }
+    match timed("pin_retries", || session.pin_retries()) {
         Ok(retries) => {
             println!("component certificate: pass");
             println!("retries: {retries}");
@@ -89,9 +132,23 @@ fn run() -> Result<(), Error> {
     Ok(())
 }
 
+/// Prints the elapsed time of a card step, and its error (status word included) if it fails.
+fn timed<R>(step: &str, run: impl FnOnce() -> Result<R, Error>) -> Result<R, Error> {
+    let start = Instant::now();
+    let result = run();
+    println!("{step}: {} ms", start.elapsed().as_millis());
+    if let Err(error) = &result {
+        println!("{step}: fail ({error})");
+    }
+    result
+}
+
 /// Signs a fixed digest with the signature key and checks the result against its certificate.
-fn sign(session: &mut Session<PcscTransport>, certificates: &[Certificate]) -> Result<(), Error> {
-    let Some(certificate) = certificates.iter().find(|c| is_signature(&c.der)) else {
+fn sign(
+    session: &mut Session<PcscTransport>,
+    certificates: &[(Certificate, Vec<u8>)],
+) -> Result<(), Error> {
+    let Some((certificate, der)) = certificates.iter().find(|(_, der)| is_signature(der)) else {
         println!("signature certificate: not found");
         return Ok(());
     };
@@ -114,7 +171,7 @@ fn sign(session: &mut Session<PcscTransport>, certificates: &[Certificate]) -> R
         }
     };
     println!("sign: pass");
-    let verified = verifies(&certificate.der, &digest, &signature);
+    let verified = verifies(der, &digest, &signature);
     println!(
         "local verification: {}",
         if verified { "pass" } else { "fail" }

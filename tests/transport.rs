@@ -85,3 +85,67 @@ fn endless_wrong_length_ends_with_its_status() {
     assert!(matches!(error, Error::Status(StatusWord(0x6C05))));
     assert_eq!(card.commands(), 1 + 2);
 }
+
+/// Answers each APDU with the next of its answers and records what it was sent.
+struct Scripted {
+    answers: Vec<Vec<u8>>,
+    sent: Vec<Vec<u8>>,
+}
+
+impl Scripted {
+    fn answering(answers: &[&[u8]]) -> Self {
+        Self {
+            answers: answers.iter().rev().map(|answer| answer.to_vec()).collect(),
+            sent: Vec::new(),
+        }
+    }
+}
+
+impl Transport for Scripted {
+    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        self.sent.push(apdu.to_vec());
+        Ok(self.answers.pop().expect("an answer left"))
+    }
+
+    fn atr(&self) -> Result<Vec<u8>, Error> {
+        Ok(DNIE_3_ATR.to_vec())
+    }
+
+    fn reset(&mut self) -> Result<Vec<u8>, Error> {
+        unreachable!("rdnie never resets")
+    }
+
+    fn transaction<R>(
+        &mut self,
+        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+    ) -> Result<R, Error> {
+        body(self)
+    }
+}
+
+const SM_DATA_MISSING: &[u8] = &[0x69, 0x87];
+
+#[test]
+fn resends_a_plain_command_once_after_a_leftover_channel() {
+    let mut card = Scripted::answering(&[SM_DATA_MISSING, &[1, 2, 0x90, 0x00]]);
+    let command = get_challenge(0x00, Some(2));
+    let response = card.transmit(&command).unwrap();
+    assert_eq!(response.data, [1, 2]);
+    assert_eq!(card.sent, vec![command.to_bytes().unwrap(); 2]);
+}
+
+#[test]
+fn a_second_missing_secure_messaging_answer_ends_with_its_status() {
+    let mut card = Scripted::answering(&[SM_DATA_MISSING, SM_DATA_MISSING]);
+    let error = card.transmit(&get_challenge(0x00, Some(2))).unwrap_err();
+    assert!(matches!(error, Error::Status(StatusWord(0x6987))));
+    assert_eq!(card.sent.len(), 2);
+}
+
+#[test]
+fn returns_missing_secure_messaging_of_protected_command_as_is() {
+    let mut card = Scripted::answering(&[SM_DATA_MISSING]);
+    let response = card.transmit(&get_challenge(0x0C, Some(2))).unwrap();
+    assert_eq!(response.status, StatusWord(0x6987));
+    assert_eq!(card.sent.len(), 1);
+}

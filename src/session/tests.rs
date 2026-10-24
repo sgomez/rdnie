@@ -9,8 +9,8 @@ use x509_cert::der::{Decode, Encode};
 use crate::{
     Error, HashAlgorithm, KeyGeneration, Pin, StatusWord,
     emulator::{
-        DEFAULT_PIN, DNIE_3_ATR, EmulatedDnie, HolderCertificate, ResponseShape, TerminalKey,
-        component_root_public_key,
+        DEFAULT_PIN, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, ResponseShape, Step,
+        TerminalKey, component_root_public_key,
     },
     key_sets::{ComponentRoots, KeySet, R1_PIN, R1_USER, R2_PIN, R2_USER},
 };
@@ -43,6 +43,17 @@ pub(crate) fn card_with_channel() -> EmulatedDnie {
 
 pub(crate) fn open(card: EmulatedDnie) -> Session<EmulatedDnie> {
     Session::open_with_roots(card, ComponentRoots::only(component_root_public_key())).unwrap()
+}
+
+/// The ids of the holder certificate files the card selected, in order.
+fn certificate_files_selected(card: &EmulatedDnie) -> Vec<u8> {
+    card.selected()
+        .iter()
+        .filter_map(|path| match path.as_slice() {
+            [[0x70, id]] => Some(*id),
+            _ => None,
+        })
+        .collect()
 }
 
 fn retries(card: EmulatedDnie) -> Result<u8, Error> {
