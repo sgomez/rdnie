@@ -93,23 +93,15 @@ fn fails_to_open_on_any_idesp_failure_but_an_absent_file() {
 struct Showing(Vec<u8>, EmulatedDnie);
 
 impl crate::Transport for Showing {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
-        self.1.transmit_raw(apdu)
-    }
-
     fn atr(&self) -> Result<Vec<u8>, Error> {
         Ok(self.0.clone())
     }
 
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        self.1.reset()
-    }
-
     fn transaction<R>(
         &mut self,
-        body: impl FnOnce(&mut dyn crate::Transport) -> Result<R, Error>,
+        body: impl FnOnce(&mut dyn crate::Port) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        body(self)
+        self.1.transaction(body)
     }
 }
 

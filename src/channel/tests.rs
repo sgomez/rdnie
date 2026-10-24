@@ -1,5 +1,5 @@
 use super::{CommandChannel, PlainChannel};
-use crate::{Command, Error, StatusWord, Transport};
+use crate::{Command, Error, Port, StatusWord};
 
 /// Answers each APDU with the next of its answers and records what it was sent.
 struct Scripted {
@@ -20,25 +20,10 @@ impl Scripted {
     }
 }
 
-impl Transport for Scripted {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+impl Port for Scripted {
+    fn transmit(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         self.sent.push(apdu.to_vec());
         Ok(self.answers.pop().expect("an answer left"))
-    }
-
-    fn atr(&self) -> Result<Vec<u8>, Error> {
-        unreachable!("the plain channel never reads the atr")
-    }
-
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        unreachable!("the plain channel never resets")
-    }
-
-    fn transaction<R>(
-        &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
-    ) -> Result<R, Error> {
-        body(self)
     }
 }
 

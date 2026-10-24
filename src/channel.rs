@@ -3,7 +3,7 @@
 //! The command level the protocol speaks, and the plain channel that carries it to the card.
 
 use crate::{
-    Command, Error, Response, StatusWord, Transport,
+    Command, Error, Port, Response, StatusWord,
     resend::{Resends, short_le},
 };
 
@@ -22,58 +22,50 @@ pub(crate) trait CommandChannel {
 /// Completes `61xx` with `GET RESPONSE` and resends a plain command on `6Cxx` and once on `69 87`;
 /// past a bound, [`Error::Status`] with the last status word.
 pub(crate) struct PlainChannel<'a> {
-    card: &'a mut dyn Transport,
+    port: &'a mut dyn Port,
 }
 
 impl<'a> PlainChannel<'a> {
-    pub(crate) fn new(card: &'a mut dyn Transport) -> Self {
-        Self { card }
+    pub(crate) fn new(port: &'a mut dyn Port) -> Self {
+        Self { port }
     }
 }
 
 impl CommandChannel for PlainChannel<'_> {
     fn transmit(&mut self, command: &Command) -> Result<Response, Error> {
-        follow_up(|apdu| self.card.transmit_raw(apdu), command)
-    }
-}
-
-/// The plain channel's exchange over `transmit_raw`, which [`Transport::transmit`] shares.
-pub(crate) fn follow_up(
-    mut transmit_raw: impl FnMut(&[u8]) -> Result<Vec<u8>, Error>,
-    command: &Command,
-) -> Result<Response, Error> {
-    let mut data = Vec::new();
-    let mut get_responses = 0;
-    let mut resends = Resends::default();
-    let mut channel_dropped = false;
-    loop {
-        let sent = resends.current(command);
-        let response = Response::parse(&transmit_raw(&sent.to_bytes()?)?)?;
-        let plain = sent.cla == PLAIN_CLA;
-        if response.status == SM_DATA_MISSING && plain {
-            if channel_dropped {
+        let mut data = Vec::new();
+        let mut get_responses = 0;
+        let mut resends = Resends::default();
+        let mut channel_dropped = false;
+        loop {
+            let sent = resends.current(command);
+            let response = Response::parse(&self.port.transmit(&sent.to_bytes()?)?)?;
+            let plain = sent.cla == PLAIN_CLA;
+            if response.status == SM_DATA_MISSING && plain {
+                if channel_dropped {
+                    return Err(Error::Status(response.status));
+                }
+                channel_dropped = true;
+                continue;
+            }
+            if Resends::is_wrong_length(response.status) && plain {
+                resends.resend_with_le(command, response.status)?;
+                continue;
+            }
+            data.extend(response.data);
+            let [sw1, sw2] = response.status.0.to_be_bytes();
+            if sw1 != RESPONSE_PENDING {
+                return Ok(Response {
+                    data,
+                    status: response.status,
+                });
+            }
+            if get_responses == MAX_GET_RESPONSES {
                 return Err(Error::Status(response.status));
             }
-            channel_dropped = true;
-            continue;
+            get_responses += 1;
+            resends.replace_with(get_response(sw2));
         }
-        if Resends::is_wrong_length(response.status) && plain {
-            resends.resend_with_le(command, response.status)?;
-            continue;
-        }
-        data.extend(response.data);
-        let [sw1, sw2] = response.status.0.to_be_bytes();
-        if sw1 != RESPONSE_PENDING {
-            return Ok(Response {
-                data,
-                status: response.status,
-            });
-        }
-        if get_responses == MAX_GET_RESPONSES {
-            return Err(Error::Status(response.status));
-        }
-        get_responses += 1;
-        resends.replace_with(get_response(sw2));
     }
 }
 

@@ -15,7 +15,7 @@ use sha1::{Digest, Sha1};
 
 use super::{check_answers, external_authentication, validate_internal_authentication};
 use crate::{
-    Error, Session, Transport,
+    Error, Port, Session,
     channel::PlainChannel,
     emulator::{
         EmulatedDnie, HandshakeFault, component_certificate, component_root_public_key,
@@ -243,25 +243,10 @@ fn refuses_a_card_key_one_byte_under_the_minimum_length() {
 
 struct AcceptingCard(Vec<Vec<u8>>);
 
-impl Transport for AcceptingCard {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+impl Port for AcceptingCard {
+    fn transmit(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
         self.0.push(apdu.to_vec());
         Ok(vec![0x90, 0x00])
-    }
-
-    fn atr(&self) -> Result<Vec<u8>, Error> {
-        Ok(vec![])
-    }
-
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        Ok(vec![])
-    }
-
-    fn transaction<R>(
-        &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
-    ) -> Result<R, Error> {
-        body(self)
     }
 }
 

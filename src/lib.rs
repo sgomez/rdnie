@@ -36,7 +36,8 @@ mod signature;
 mod standard_error_codes;
 mod transport;
 
-pub use apdu::{Command, Response, StatusWord};
+pub(crate) use apdu::Command;
+pub use apdu::{Response, StatusWord};
 pub use atr::{describe_atr, is_dnie};
 pub use certificates::{Certificate, INTERMEDIATE_CA_LABEL, KeyReference, SIGNATURE_LABEL};
 pub use error::Error;
@@ -47,4 +48,4 @@ pub use pcsc_transport::PcscTransport;
 pub use pin::Pin;
 pub use session::Session;
 pub use signature::HashAlgorithm;
-pub use transport::Transport;
+pub use transport::{Port, Transport};

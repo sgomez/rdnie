@@ -10,7 +10,7 @@ use pcsc::{
     Scope, ShareMode, State, Transaction,
 };
 
-use crate::{Error, Transport, is_dnie};
+use crate::{Error, Port, Transport, is_dnie};
 
 /// PC/SC transport: `PCSC.framework` on macOS, WinSCard on Windows and pcsc-lite on Linux.
 pub struct PcscTransport {
@@ -74,6 +74,25 @@ impl PcscTransport {
     #[must_use]
     pub fn reader(&self) -> String {
         self.reader.to_string_lossy().into_owned()
+    }
+
+    /// Resets the card and returns its ATR. rdnie never calls it; it is there for callers.
+    ///
+    /// Disconnects with `ResetCard` and reconnects to the same reader with the negotiated
+    /// protocol, as `SmartcardIoConnection.reset` does; also reconnects after a failed reset.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Transport`] if the card cannot be reset, [`Error::NoReader`] or
+    /// [`Error::NoCard`] if the reader or card is gone on reconnecting. After a failed reset,
+    /// every call returns that error until a later reset reconnects.
+    pub fn reset(&mut self) -> Result<Vec<u8>, Error> {
+        let protocol = self.card.card().map_or(Protocols::ANY, negotiated);
+        self.card.disconnect(Disposition::ResetCard);
+        let (context, reader) = (&self.context, &self.reader);
+        atr(reopen(&mut self.card.0, || {
+            connect_shared(context, reader, protocol)
+        })?)
     }
 }
 
@@ -213,30 +232,13 @@ fn reopen<C>(
 }
 
 impl Transport for PcscTransport {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
-        let result = transmit(self.card.card()?, apdu);
-        let result = removed_if_empty(result, || reader_empty(&self.context, &self.reader));
-        recovering(result, || reconnect(&mut self.card))
-    }
-
     fn atr(&self) -> Result<Vec<u8>, Error> {
         atr(self.card.card()?)
     }
 
-    /// Disconnects with `ResetCard` and reconnects to the same reader with the negotiated
-    /// protocol, as `SmartcardIoConnection.reset` does; also reconnects after a failed reset.
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        let protocol = self.card.card().map_or(Protocols::ANY, negotiated);
-        self.card.disconnect(Disposition::ResetCard);
-        let (context, reader) = (&self.context, &self.reader);
-        atr(reopen(&mut self.card.0, || {
-            connect_shared(context, reader, protocol)
-        })?)
-    }
-
     fn transaction<R>(
         &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+        body: impl FnOnce(&mut dyn Port) -> Result<R, Error>,
     ) -> Result<R, Error> {
         let result = in_transaction(self.card.card_mut()?, body);
         let result = removed_if_empty(result, || reader_empty(&self.context, &self.reader));
@@ -264,7 +266,7 @@ fn reader_empty(context: &Context, reader: &CStr) -> bool {
 
 fn in_transaction<R>(
     card: &mut Card,
-    body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+    body: impl FnOnce(&mut dyn Port) -> Result<R, Error>,
 ) -> Result<R, Error> {
     let mut transaction = InTransaction(card.transaction().map_err(connected)?);
     let result = body(&mut transaction);
@@ -312,33 +314,12 @@ fn outcome<R>(result: Result<R, Error>, ended: Result<(), Error>) -> Result<R, E
 /// The card while a PC/SC transaction holds it.
 struct InTransaction<'card>(Transaction<'card>);
 
-impl Transport for InTransaction<'_> {
-    fn transmit_raw(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
-        transmit(&self.0, apdu)
+impl Port for InTransaction<'_> {
+    fn transmit(&mut self, apdu: &[u8]) -> Result<Vec<u8>, Error> {
+        let mut buffer = [0; MAX_BUFFER_SIZE];
+        let response = self.0.transmit(apdu, &mut buffer).map_err(connected)?;
+        Ok(response.to_vec())
     }
-
-    fn atr(&self) -> Result<Vec<u8>, Error> {
-        atr(&self.0)
-    }
-
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        Err(Error::Transport(
-            "cannot reset the card inside a transaction".into(),
-        ))
-    }
-
-    fn transaction<R>(
-        &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
-    ) -> Result<R, Error> {
-        body(self)
-    }
-}
-
-fn transmit(card: &Card, apdu: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut buffer = [0; MAX_BUFFER_SIZE];
-    let response = card.transmit(apdu, &mut buffer).map_err(connected)?;
-    Ok(response.to_vec())
 }
 
 fn atr(card: &Card) -> Result<Vec<u8>, Error> {
