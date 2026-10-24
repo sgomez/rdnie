@@ -2,6 +2,8 @@
 
 //! Plain file access below any secure channel: SELECT by name or path, and chunked READ BINARY.
 
+use der::{Decode, Encode, Header, SliceReader, Tag};
+
 use crate::{Command, Error, StatusWord, channel::CommandChannel};
 
 const MASTER_FILE_NAME: &[u8] = b"Master.File";
@@ -12,6 +14,8 @@ const READ_BINARY: u8 = 0xB0;
 const EOF_REACHED: StatusWord = StatusWord(0x6282);
 const OFFSET_OUTSIDE_EF: StatusWord = StatusWord(0x6B00);
 const FCI: u8 = 0x6F;
+/// A tag of one byte and a length of up to two.
+const MAX_HEADER: usize = 4;
 
 /// Absolute path to a file, without the master file.
 pub(crate) struct Location(Vec<[u8; 2]>);
@@ -36,12 +40,40 @@ impl Location {
 
 /// Selects the master file by name, then each file in `location`, and reads the last one whole.
 pub(crate) fn read(card: &mut dyn CommandChannel, location: &Location) -> Result<Vec<u8>, Error> {
-    select_master_file(card)?;
-    let mut length = 0;
-    for id in &location.0 {
-        length = select(card, 0x00, id)?;
+    let mut file = Binary::select(card, location)?;
+    file.read_to(file.length)?;
+    Ok(file.content)
+}
+
+/// Selects like [`read`] and reads at most `objects` SEQUENCEs, up to the first byte that starts none.
+pub(crate) fn read_sequences(
+    card: &mut dyn CommandChannel,
+    location: &Location,
+    objects: usize,
+) -> Result<Vec<u8>, Error> {
+    let mut file = Binary::select(card, location)?;
+    let mut start = 0;
+    for _ in 0..objects {
+        file.read_to(start + MAX_HEADER)?;
+        let Some(length) = file.content.get(start..).and_then(sequence_length) else {
+            break;
+        };
+        start += length;
+        file.read_to(start)?;
     }
-    read_binary_complete(card, length)
+    Ok(file.content)
+}
+
+/// The length of the SEQUENCE TLV whose header opens `bytes`.
+fn sequence_length(bytes: &[u8]) -> Option<usize> {
+    let header = Header::decode(&mut SliceReader::new(bytes).ok()?).ok()?;
+    if header.tag != Tag::Sequence {
+        return None;
+    }
+    (header.encoded_len().ok()? + header.length)
+        .ok()?
+        .try_into()
+        .ok()
 }
 
 /// Selects the master file by name.
@@ -125,35 +157,63 @@ fn take<'a>(body: &'a [u8], tag: u8, index: &mut usize) -> Option<&'a [u8]> {
     Some(value)
 }
 
-/// Reads `length` bytes of the selected file in chunks, stopping early at `6282` or `6B00`.
-fn read_binary_complete(card: &mut dyn CommandChannel, length: usize) -> Result<Vec<u8>, Error> {
-    let mut content = Vec::with_capacity(length);
-    let mut offset = 0;
-    while offset < length {
-        let [p1, p2] = u16::try_from(offset)
-            .map_err(|_| Error::CommandTooLong(offset))?
-            .to_be_bytes();
-        let response = card.transmit(&Command {
-            cla: 0x00,
-            ins: READ_BINARY,
-            p1,
-            p2,
-            data: vec![],
-            le: Some(u16::try_from((length - offset).min(MAX_READ_CHUNK)).unwrap_or(0)),
-        })?;
-        match response.status {
-            OFFSET_OUTSIDE_EF => break,
-            status if status.is_success() || status == EOF_REACHED => {
-                content.extend(response.data);
-                if status == EOF_REACHED {
-                    break;
-                }
-            }
-            status => return Err(Error::Status(status)),
+/// The selected file, read from its start in chunks.
+struct Binary<'a> {
+    card: &'a mut dyn CommandChannel,
+    length: usize,
+    offset: usize,
+    content: Vec<u8>,
+    ended: bool,
+}
+
+impl<'a> Binary<'a> {
+    fn select(card: &'a mut dyn CommandChannel, location: &Location) -> Result<Self, Error> {
+        select_master_file(card)?;
+        let mut length = 0;
+        for id in &location.0 {
+            length = select(card, 0x00, id)?;
         }
-        offset += MAX_READ_CHUNK;
+        Ok(Self {
+            card,
+            length,
+            offset: 0,
+            content: Vec::new(),
+            ended: false,
+        })
     }
-    Ok(content)
+
+    /// Reads up to `end`, never past the FCI length, stopping early at `6282` or `6B00`.
+    fn read_to(&mut self, end: usize) -> Result<(), Error> {
+        let end = end.min(self.length);
+        // Bounded by the range, so no Le is 0 and no faulty card can keep the loop going.
+        for offset in (self.offset..end).step_by(MAX_READ_CHUNK) {
+            if self.ended {
+                break;
+            }
+            let le = (end - offset).min(MAX_READ_CHUNK);
+            let [p1, p2] = u16::try_from(offset)
+                .map_err(|_| Error::CommandTooLong(offset))?
+                .to_be_bytes();
+            let response = self.card.transmit(&Command {
+                cla: 0x00,
+                ins: READ_BINARY,
+                p1,
+                p2,
+                data: vec![],
+                le: Some(u16::try_from(le).unwrap_or(0)),
+            })?;
+            match response.status {
+                OFFSET_OUTSIDE_EF => self.ended = true,
+                status if status.is_success() || status == EOF_REACHED => {
+                    self.content.extend(response.data);
+                    self.ended = status == EOF_REACHED;
+                }
+                status => return Err(Error::Status(status)),
+            }
+            self.offset = offset + le;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

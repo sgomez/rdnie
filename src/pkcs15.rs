@@ -10,7 +10,7 @@ use der::{
 use crate::Error;
 
 /// Objects a directory file holds at most, as in JMulticard.
-const MAX_OBJECTS: usize = 10;
+pub(crate) const MAX_OBJECTS: usize = 10;
 
 const TYPE_ATTRIBUTES: Tag = Tag::ContextSpecific {
     constructed: true,
