@@ -22,14 +22,14 @@ JMulticard `4ec9494` against rdnie `c179c86`. Java paths are relative to `jmulti
 | `Dnie.setCallbackHandler`, `setPasswordCallback` | `Pin` | Changed |
 | `DniePrivateKeyReference` | `KeyReference` | Changed |
 | `DnieCertParseUtil` | `Holder::from_der` | Changed |
-| `ApduConnection` | `Transport` | Changed |
-| `ApduConnection.transmit` | `Transport::transmit_raw`, `Transport::transmit` | Changed |
-| `ApduConnection.reset` | `Transport::reset` | Same |
+| `ApduConnection` | `Transport`, `Port` | Changed |
+| `ApduConnection.transmit` | `Port::transmit` | Changed |
+| `ApduConnection.reset` | `PcscTransport::reset` | Changed |
 | `ApduConnection.getTerminals`, `getTerminalInfo`, `setTerminal` | `PcscTransport::readers`, `reader`, `connect` | Changed |
 | `ApduConnection.open`, `close`, `isOpen` | `PcscTransport::connect`, `Drop` | Changed |
 | `ApduConnection.setProtocol` | — | Not ported |
 | `SmartcardIoConnection.setExclusiveUse` | `Transport::transaction` | Changed |
-| `CommandApdu` | `Command` | Changed |
+| `CommandApdu` | — | Changed |
 | `ResponseApdu` | `Response` | Same |
 | `StatusWord` | `StatusWord` | Same |
 | `DnieAtr.toString` | `describe_atr` | Changed |
@@ -104,16 +104,24 @@ Only the key id and file. The label lives on `Certificate`; the rest served `cip
 
 Reads the subject as ASN.1 instead of searching Java's DN string (#34, #41, PR #54).
 
-### `ApduConnection` → `Transport`
+### `ApduConnection` → `Transport`, `Port`
 
-The seam the emulator plugs into (CLAUDE.md constraint 5).
+The seam the emulator plugs into (CLAUDE.md constraint 5). Java has one interface; rdnie splits it by role. `Transport` owns the connection and runs a transaction; `Port` only sends bytes and exists only inside one. A decorator can only get a `Port` from the inner transaction, so it cannot skip the card's exclusive lock (#170).
 
-### `ApduConnection.transmit` → `Transport::transmit_raw`, `Transport::transmit`
+### `ApduConnection.transmit` → `Port::transmit`
+
+JMulticard keeps the raw send `protected` and the command level public. Rust traits have no protected methods, so rdnie keeps the raw level public and hides the command level: `Command` and the plain and secure channels are crate-private. Making `Command` public later is a minor change; making it private later would be breaking (#170).
+
+The follow-up lives in the internal plain channel:
 
 - GET RESPONSE and `6Cxx` are bounded; Java recurses without limit (parity.md:73).
 - The `6Cxx` resend keeps Lc (parity.md:76).
 - A plain command answered `69 87` is resent once, needed without a reset (parity.md:74; #138).
 - No `90 C2` envelope (parity.md:51).
+
+### `ApduConnection.reset` → `PcscTransport::reset`
+
+An inherent method of `PcscTransport` and of the emulated DNIe, not of `Transport`: nobody in the protocol resets the card, and an adapter should not have to implement it (#170).
 
 ### `ApduConnection.getTerminals`, `getTerminalInfo`, `setTerminal` → `PcscTransport::readers`, `reader`, `connect`
 
@@ -125,11 +133,11 @@ A connected value is open; dropping it leaves the card (parity.md:143).
 
 ### `SmartcardIoConnection.setExclusiveUse` → `Transport::transaction`
 
-One PC/SC transaction per operation: nothing slips in mid-operation, and the reader is free while the holder types the PIN (parity.md:75; #1). A closure, because `pcsc` only offers a borrowing guard and `unsafe` is forbidden (PR #15).
+One PC/SC transaction per operation: nothing slips in mid-operation, and the reader is free while the holder types the PIN (parity.md:75; #1). The body receives a `Port`. A closure, because `pcsc` only offers a borrowing guard and `unsafe` is forbidden (PR #15).
 
-### `CommandApdu` → `Command`
+### `CommandApdu` → crate-private `Command`
 
-Short APDUs only (parity.md:72). Public fields; no recorded reason.
+Short APDUs only (parity.md:72). Hidden so its public fields stop binding semver while no consumer builds commands (#170).
 
 ### `DnieAtr.toString` → `describe_atr`
 
