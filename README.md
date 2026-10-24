@@ -29,6 +29,20 @@ It reads only what is asked for and never resets the card, so it sends fewer APD
 
 Reading every certificate, as JMulticard does, rdnie takes 830 ms. Method and caveats: [`docs/benchmark.md`](https://github.com/sgomez/rdnie/blob/main/docs/benchmark.md).
 
+## Compared with JMulticard
+
+| | JMulticard | rdnie |
+| --- | --- | --- |
+| Finding the DNIe | Resets each reader until one holds a DNIe | Reads each reader's ATR without a reset |
+| Opening | Resets the card twice | No reset |
+| OpenSC or Firefox on the same card | Lose their state | Keep working, checked on a real card |
+| Reads on opening | MF, CDF, every certificate and PrKDF | The IDESP |
+| One certificate | From the map loaded on opening | Reads only its file, once per session |
+| Signing | Needs the certificate, for the modulus length | Reads no certificate |
+| A corrupt certificate | Breaks the whole load | Fails only `certificate` for its label |
+| The IDESP | Read again on every call | Read once, on opening |
+| A lost channel while signing | Signs again | Returns the error; nothing retries |
+
 ## Usage
 
 ```sh
