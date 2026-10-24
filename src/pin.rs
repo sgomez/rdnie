@@ -98,12 +98,10 @@ impl PinGuard {
     ) -> Result<R, Error> {
         pin.check_format()?;
         let expected = match self.expected {
+            None => return Err(Error::PinRetriesNotRead),
+            Some(0) => return Err(Error::PinBlocked),
             Some(expected) => expected,
-            None => self.read_retries(transport)?,
         };
-        if expected == 0 {
-            return Err(Error::PinBlocked);
-        }
         let authenticator = &self.authenticator;
         let mut reached = Reached::BeforeVerify;
         let result = transport.transaction(|card| {

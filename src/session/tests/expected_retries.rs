@@ -119,3 +119,69 @@ fn an_invalid_pin_format_keeps_the_next_sign_to_one_transaction() {
     sign(&mut session, &key).unwrap();
     assert_eq!(pin_transactions_since(&session.transport, before).len(), 1);
 }
+
+#[test]
+fn a_freshly_opened_session_signs_nothing_and_sends_no_apdu() {
+    let mut session = open(signing_card());
+    let key = first_key(&mut session);
+    let sent = session.transport.commands();
+    assert!(matches!(
+        sign(&mut session, &key),
+        Err(Error::PinRetriesNotRead)
+    ));
+    assert!(matches!(
+        verify(&mut session),
+        Err(Error::PinRetriesNotRead)
+    ));
+    assert_eq!(session.transport.commands(), sent);
+}
+
+#[test]
+fn a_retry_burned_since_an_accepted_verify_needs_a_new_read_before_signing() {
+    let (mut session, key) = read_retries(signing_card());
+    verify(&mut session).unwrap();
+    session.transport.burn_a_retry();
+    assert!(matches!(
+        sign(&mut session, &key),
+        Err(Error::PinRetriesChanged)
+    ));
+    assert!(matches!(
+        sign(&mut session, &key),
+        Err(Error::PinRetriesNotRead)
+    ));
+    assert_eq!(session.pin_retries_left().unwrap(), 2);
+    sign(&mut session, &key).unwrap();
+}
+
+#[test]
+fn a_reset_at_verify_needs_a_new_read_before_signing() {
+    let (mut session, key) = read_retries(signing_card());
+    strike(&mut session, |card| card.resetting_card_at(Step::Verify));
+    assert!(matches!(sign(&mut session, &key), Err(Error::CardReset)));
+    assert!(matches!(
+        sign(&mut session, &key),
+        Err(Error::PinRetriesNotRead)
+    ));
+}
+
+#[test]
+fn an_unknown_answer_to_verify_needs_a_new_read_before_signing() {
+    let (mut session, key) = read_retries(signing_card().answering_verify_with(0x6982));
+    assert!(matches!(
+        sign(&mut session, &key),
+        Err(Error::Status(StatusWord(0x6982)))
+    ));
+    assert!(matches!(
+        sign(&mut session, &key),
+        Err(Error::PinRetriesNotRead)
+    ));
+}
+
+#[test]
+fn an_invalid_pin_format_on_a_fresh_session_is_reported_first() {
+    let mut session = open(signing_card());
+    let key = first_key(&mut session);
+    let short = Pin::new("short".to_owned());
+    let result = session.sign(&[0; 32], DigestAlgorithm::Sha256, &key, short);
+    assert!(matches!(result, Err(Error::InvalidPinFormat)));
+}
