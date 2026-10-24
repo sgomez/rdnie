@@ -1,4 +1,5 @@
 use super::*;
+use crate::Transport;
 
 // Expected values computed with OpenSSL, independently of this module.
 fn hex(text: &str) -> Vec<u8> {
@@ -272,7 +273,7 @@ fn resends_with_le_from_inner_6cxx() {
         ],
         sent: vec![],
     };
-    let response = SecureChannel::new(jmulticard_session(), &mut card)
+    let response = SecureChannel::new(jmulticard_session(), PlainChannel::new(&mut card))
         .transmit(&select(b"Master.File".to_vec()))
         .unwrap();
     assert_eq!(response.status, StatusWord::SUCCESS);
@@ -292,7 +293,7 @@ fn returns_other_inner_warnings_without_resending() {
             responses: vec![objects],
             sent: vec![],
         };
-        let response = SecureChannel::new(jmulticard_session(), &mut card)
+        let response = SecureChannel::new(jmulticard_session(), PlainChannel::new(&mut card))
             .transmit(&select(b"Master.File".to_vec()))
             .unwrap();
         assert_eq!(response.status, StatusWord(u16::from_be_bytes(status)));
@@ -388,51 +389,10 @@ fn ends_an_endless_inner_wrong_length_with_its_status() {
         responses: answers(&mut SecureMessaging::fixed(), &[StatusWord(0x6C05); 3]),
         sent: vec![],
     };
-    let result = SecureChannel::new(SecureMessaging::fixed(), &mut card)
+    let result = SecureChannel::new(SecureMessaging::fixed(), PlainChannel::new(&mut card))
         .transmit(&select(b"Master.File".to_vec()));
     assert!(matches!(result, Err(Error::Status(StatusWord(0x6C05)))));
     assert_eq!(card.sent.len(), 3);
-}
-
-#[test]
-fn refuses_raw_apdus_and_resets_inside_a_channel() {
-    let mut card = ScriptedCard {
-        responses: vec![],
-        sent: vec![],
-    };
-    let mut channel = SecureChannel::new(SecureMessaging::fixed(), &mut card);
-    assert!(matches!(
-        channel.transmit_raw(&[0x00, 0xA4, 0x04, 0x00]),
-        Err(Error::Transport(_))
-    ));
-    assert!(matches!(channel.reset(), Err(Error::Transport(_))));
-    drop(channel);
-    assert_eq!(card.sent.len(), 0);
-}
-
-#[test]
-fn reads_the_atr_of_the_card_beneath_a_channel() {
-    let mut card = ScriptedCard {
-        responses: vec![],
-        sent: vec![],
-    };
-    let channel = SecureChannel::new(SecureMessaging::fixed(), &mut card);
-    assert_eq!(channel.atr().unwrap(), [0x3B, 0x7F]);
-}
-
-#[test]
-fn runs_a_transaction_on_the_channel_itself() {
-    let mut card = ScriptedCard {
-        responses: answers(&mut SecureMessaging::fixed(), &[StatusWord::SUCCESS]),
-        sent: vec![],
-    };
-    let mut channel = SecureChannel::new(SecureMessaging::fixed(), &mut card);
-    let status = channel
-        .transaction(|inside| Ok(inside.transmit(&select(b"Master.File".to_vec()))?.status))
-        .unwrap();
-    drop(channel);
-    assert_eq!(status, StatusWord::SUCCESS);
-    assert_eq!(card.sent[0][0], 0x0C);
 }
 
 #[test]
@@ -449,7 +409,7 @@ fn sends_the_commands_of_a_channel_opened_inside_another_to_the_card_beneath() {
         responses,
         sent: vec![],
     };
-    let response = SecureChannel::new(outer(), &mut card)
+    let response = SecureChannel::new(outer(), PlainChannel::new(&mut card))
         .open_inside(|outer| {
             outer.transmit(&handshake)?.into_success()?;
             Ok(SecureMessaging::fixed())

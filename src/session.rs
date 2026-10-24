@@ -10,6 +10,7 @@ use crate::{
     atr::check_dnie_3,
     card_authenticator::CardAuthenticator,
     certificates,
+    channel::{CommandChannel, PlainChannel},
     files::{self, Location},
     key_sets::{ComponentRoots, KeyGeneration},
     pin::PinGuard,
@@ -64,7 +65,7 @@ impl<T: Transport> Session<T> {
 
     fn open_with(mut transport: T, roots: ComponentRoots) -> Result<Self, Error> {
         check_dnie_3(&transport.atr()?)?;
-        let idesp = transport.transaction(read_idesp)?;
+        let idesp = operation(&mut transport, read_idesp)?;
         Ok(Self {
             transport,
             pin_guard: PinGuard::new(CardAuthenticator::from_idesp(idesp.as_deref(), roots)),
@@ -177,16 +178,16 @@ impl<T: Transport> Session<T> {
 /// Runs `body` in one transaction; like `Dnie3`, each operation opens its own channel.
 fn operation<R>(
     transport: &mut impl Transport,
-    body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+    body: impl FnOnce(&mut dyn CommandChannel) -> Result<R, Error>,
 ) -> Result<R, Error> {
-    transport.transaction(body)
+    transport.transaction(|card| body(&mut PlainChannel::new(card)))
 }
 
 /// The value in `slot`, read in its own operation if the slot is empty.
 fn cached<'a, R>(
     slot: &'a mut Option<R>,
     transport: &mut impl Transport,
-    read: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
+    read: impl FnOnce(&mut dyn CommandChannel) -> Result<R, Error>,
 ) -> Result<&'a R, Error> {
     let value = match slot.take() {
         Some(value) => value,
@@ -196,7 +197,7 @@ fn cached<'a, R>(
 }
 
 /// The IDESP as stored, or `None` if the card has no IDESP file.
-fn read_idesp(card: &mut dyn Transport) -> Result<Option<String>, Error> {
+fn read_idesp(card: &mut dyn CommandChannel) -> Result<Option<String>, Error> {
     let location = Location::new(IDESP).expect("the IDESP path is valid");
     let idesp = match files::read(card, &location) {
         Ok(idesp) => idesp,

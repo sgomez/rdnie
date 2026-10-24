@@ -2,7 +2,7 @@
 
 //! Plain file access below any secure channel: SELECT by name or path, and chunked READ BINARY.
 
-use crate::{Command, Error, StatusWord, Transport};
+use crate::{Command, Error, StatusWord, channel::CommandChannel};
 
 const MASTER_FILE_NAME: &[u8] = b"Master.File";
 const MASTER_FILE_ID: [u8; 2] = [0x3F, 0x00];
@@ -35,7 +35,7 @@ impl Location {
 }
 
 /// Selects the master file by name, then each file in `location`, and reads the last one whole.
-pub(crate) fn read(card: &mut dyn Transport, location: &Location) -> Result<Vec<u8>, Error> {
+pub(crate) fn read(card: &mut dyn CommandChannel, location: &Location) -> Result<Vec<u8>, Error> {
     select_master_file(card)?;
     let mut length = 0;
     for id in &location.0 {
@@ -45,7 +45,7 @@ pub(crate) fn read(card: &mut dyn Transport, location: &Location) -> Result<Vec<
 }
 
 /// Selects the master file by name.
-pub(crate) fn select_master_file(card: &mut dyn Transport) -> Result<(), Error> {
+pub(crate) fn select_master_file(card: &mut dyn CommandChannel) -> Result<(), Error> {
     card.transmit(&master_file_selection())?
         .into_success()
         .map(drop)
@@ -68,7 +68,7 @@ fn selection(p1: u8, file: &[u8]) -> Command {
 }
 
 /// Selects a file and returns the length its FCI announces.
-fn select(card: &mut dyn Transport, p1: u8, file: &[u8]) -> Result<usize, Error> {
+fn select(card: &mut dyn CommandChannel, p1: u8, file: &[u8]) -> Result<usize, Error> {
     let response = card.transmit(&selection(p1, file))?;
     fci_length(&response.into_success()?)
 }
@@ -118,7 +118,7 @@ fn take<'a>(body: &'a [u8], tag: u8, index: &mut usize) -> Option<&'a [u8]> {
 }
 
 /// Reads `length` bytes of the selected file in chunks, stopping early at `6282` or `6B00`.
-fn read_binary_complete(card: &mut dyn Transport, length: usize) -> Result<Vec<u8>, Error> {
+fn read_binary_complete(card: &mut dyn CommandChannel, length: usize) -> Result<Vec<u8>, Error> {
     let mut content = Vec::with_capacity(length);
     let mut offset = 0;
     while offset < length {

@@ -13,7 +13,11 @@ use retail_mac::{KeyInit, Mac, RetailMac};
 use sha1::{Digest, Sha1};
 use zeroize::Zeroize;
 
-use crate::{Command, Error, Response, StatusWord, Transport, resend::Resends};
+use crate::{
+    Command, Error, Response, StatusWord,
+    channel::{CommandChannel, PlainChannel},
+    resend::Resends,
+};
 
 const BLOCK: usize = 8;
 const PROTECTED_CLA: u8 = 0x0C;
@@ -189,14 +193,15 @@ impl SecureMessaging {
     }
 }
 
-/// An open secure channel bound to the card it runs over: the only way protected commands are sent.
+/// An open secure channel over the plain channel to its card: the only way protected commands are
+/// sent.
 pub(crate) struct SecureChannel<'a> {
     state: SecureMessaging,
-    card: &'a mut dyn Transport,
+    card: PlainChannel<'a>,
 }
 
 impl<'a> SecureChannel<'a> {
-    pub(crate) fn new(state: SecureMessaging, card: &'a mut dyn Transport) -> Self {
+    pub(crate) fn new(state: SecureMessaging, card: PlainChannel<'a>) -> Self {
         Self { state, card }
     }
 
@@ -204,37 +209,14 @@ impl<'a> SecureChannel<'a> {
     /// and drops this one.
     pub(crate) fn open_inside(
         mut self,
-        handshake: impl FnOnce(&mut dyn Transport) -> Result<SecureMessaging, Error>,
+        handshake: impl FnOnce(&mut dyn CommandChannel) -> Result<SecureMessaging, Error>,
     ) -> Result<Self, Error> {
         let state = handshake(&mut self)?;
         Ok(Self::new(state, self.card))
     }
 }
 
-impl Transport for SecureChannel<'_> {
-    fn transmit_raw(&mut self, _apdu: &[u8]) -> Result<Vec<u8>, Error> {
-        Err(Error::Transport(
-            "raw apdus cannot cross a secure channel".into(),
-        ))
-    }
-
-    fn atr(&self) -> Result<Vec<u8>, Error> {
-        self.card.atr()
-    }
-
-    fn reset(&mut self) -> Result<Vec<u8>, Error> {
-        Err(Error::Transport(
-            "a secure channel cannot reset the card".into(),
-        ))
-    }
-
-    fn transaction<R>(
-        &mut self,
-        body: impl FnOnce(&mut dyn Transport) -> Result<R, Error>,
-    ) -> Result<R, Error> {
-        body(self)
-    }
-
+impl CommandChannel for SecureChannel<'_> {
     /// Protects `command` and returns the card's plain answer, resending it with the Le of a `6Cxx`
     /// at most 2 times in a row; past that, [`Error::Status`] with the last one.
     fn transmit(&mut self, command: &Command) -> Result<Response, Error> {

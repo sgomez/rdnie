@@ -1,6 +1,6 @@
 // Derived from JMulticard: see LICENSE.jmulticard.md.
 
-//! The bounded `6Cxx` resend shared by the transport and the secure channel.
+//! The bounded `6Cxx` resend shared by the plain channel and the secure channel.
 
 use zeroize::Zeroize;
 

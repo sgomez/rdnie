@@ -4,7 +4,9 @@
 //! the PIN channel and the user channel as `Dnie3` does.
 
 use crate::{
-    Error, Transport, cwa14890, files,
+    Error,
+    channel::{CommandChannel, PlainChannel},
+    cwa14890, files,
     key_sets::{Channel, ComponentRoots, KeyGeneration, KeySet},
     secure_messaging::SecureChannel,
 };
@@ -43,9 +45,9 @@ impl CardAuthenticator {
     /// the PIN keys.
     pub(crate) fn open_pin_channel<'a>(
         &self,
-        card: &'a mut dyn Transport,
+        mut card: PlainChannel<'a>,
     ) -> Result<SecureChannel<'a>, Error> {
-        match files::select_master_file(card) {
+        match files::select_master_file(&mut card) {
             Ok(()) | Err(Error::Status(_)) => {}
             Err(error) => return Err(error),
         }
