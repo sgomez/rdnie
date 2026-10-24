@@ -27,7 +27,7 @@ mod terminal_keys;
 
 use std::collections::BTreeMap;
 
-use rdnie::{Error, KeyGeneration, Port, Transport};
+use rdnie::{Atr, Error, KeyGeneration, Port, Transport};
 use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
 
 use channel::CardChannel;

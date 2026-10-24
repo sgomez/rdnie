@@ -93,8 +93,8 @@ fn fails_to_open_on_any_idesp_failure_but_an_absent_file() {
 struct Showing(Vec<u8>, EmulatedDnie);
 
 impl crate::Transport for Showing {
-    fn atr(&self) -> Result<Vec<u8>, Error> {
-        Ok(self.0.clone())
+    fn atr(&self) -> Result<crate::Atr, Error> {
+        Ok(crate::Atr::new(self.0.clone()))
     }
 
     fn transaction<R>(

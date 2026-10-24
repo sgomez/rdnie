@@ -9,12 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - *(session)* `Session::verify_pin` verifies the PIN without signing
+- *(atr)* `Atr`, with `check` (whether `Session::open` accepts the card, without touching it), `as_bytes` and `Display`
+- *(session)* `Session::atr` returns the `Atr` `open` classified, without touching the card
 
 ### Changed
 
 - *(session)* [**breaking**] rename `Session::pin_retries` to `pin_retries_left`
 - *(signature)* [**breaking**] rename `HashAlgorithm` to `DigestAlgorithm`, and add `DigestAlgorithm::digest_length`
 - *(apdu)* [**breaking**] make `Response` crate-private; `StatusWord` stays public
+- *(transport)* [**breaking**] `Transport::atr` returns `Atr` instead of `Vec<u8>`
+- *(atr)* [**breaking**] remove `is_dnie` and `describe_atr`: use `Atr::check` and `Atr`'s `Display`
+- *(pcsc)* `PcscTransport::connect_first_dnie` picks a card whose `Atr::check` gives `Ok`, `LegacyDnie` or `BurnedDnie`, so it now skips a card with the DNIe tag that `Session::open` would refuse as `NotDnie`
 - *(session)* `sign` reports a wrong digest length before an invalid PIN format
 - *(session)* after `WrongPin { retries_left }`, the next `sign` or `verify_pin` expects `retries_left` instead of reading the retries again
 - *(session)* `certificate` reports a certificate file that is not X.509 as `MalformedCertificate`

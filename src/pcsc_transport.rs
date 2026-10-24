@@ -10,7 +10,7 @@ use pcsc::{
     Scope, ShareMode, State, Transaction,
 };
 
-use crate::{Error, Port, Transport, is_dnie};
+use crate::{Atr, Error, Port, Transport};
 
 /// PC/SC transport: `PCSC.framework` on macOS, WinSCard on Windows and pcsc-lite on Linux.
 pub struct PcscTransport {
@@ -170,7 +170,7 @@ fn first_dnie<C>(probes: impl IntoIterator<Item = Probe<C>>) -> Result<C, Error>
     for probe in probes {
         readers += 1;
         match probe {
-            Probe::Card(card, atr) if is_dnie(&atr) => return Ok(card),
+            Probe::Card(card, atr) if names_a_dnie(&atr) => return Ok(card),
             Probe::Card(..) => wrong_card = true,
             Probe::Empty => {}
             Probe::Failed(error) => failure = failure.or(Some(error)),
@@ -182,6 +182,14 @@ fn first_dnie<C>(probes: impl IntoIterator<Item = Probe<C>>) -> Result<C, Error>
         None => Error::NoCard,
         Some(error) => Error::Transport(error.to_string()),
     })
+}
+
+/// A DNIe, usable or not, so that `Session::open` names a legacy or burned one.
+fn names_a_dnie(atr: &[u8]) -> bool {
+    matches!(
+        Atr::new(atr).check(),
+        Ok(()) | Err(Error::LegacyDnie | Error::BurnedDnie)
+    )
 }
 
 /// Card handle that disconnects with `LeaveCard`, as `SmartcardIoConnection.close` does.
@@ -232,8 +240,8 @@ fn reopen<C>(
 }
 
 impl Transport for PcscTransport {
-    fn atr(&self) -> Result<Vec<u8>, Error> {
-        atr(self.card.card()?)
+    fn atr(&self) -> Result<Atr, Error> {
+        atr(self.card.card()?).map(Atr::new)
     }
 
     fn transaction<R>(

@@ -2,7 +2,7 @@
 
 //! DNIe detection and classification by ATR.
 
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 
 use crate::Error;
 
@@ -28,78 +28,104 @@ const UNKNOWN: &str = "unknown";
 
 const BURNED_STATUS: [u8; 2] = [0x65, 0x81];
 
-/// Whether the ATR belongs to a DNIe.
-#[must_use]
-pub fn is_dnie(atr: &[u8]) -> bool {
-    atr.first() == Some(&0x3B) && atr.windows(DNIE_TAG.len()).any(|window| window == DNIE_TAG)
-}
+/// A card's Answer To Reset, as JMulticard's `Atr`; displays itself as `DnieAtr.toString`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Atr(Vec<u8>);
 
-/// Accepts a DNIe 3.0/4.0 ATR and refuses any other card with its own error.
-pub(crate) fn check_dnie_3(atr: &[u8]) -> Result<(), Error> {
-    if !is_dnie(atr) {
-        return Err(Error::NotDnie);
+impl Atr {
+    /// Wraps the raw bytes of an ATR.
+    #[must_use]
+    pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
+        Self(bytes.into())
     }
-    if atr.ends_with(&BURNED_STATUS) {
-        return Err(Error::BurnedDnie);
-    }
-    if !matches_mask(atr) {
-        return Err(Error::NotDnie);
-    }
-    if atr[OS_VERSION] != DNIE_3_OS {
-        return Err(Error::LegacyDnie);
-    }
-    Ok(())
-}
 
-/// Describes an ATR in words for logs; any ATR that is not 20 bytes starting with `3B` gives its hex bytes only.
-#[must_use]
-pub fn describe_atr(atr: &[u8]) -> String {
-    let hex = hex(atr);
-    if atr.len() != DNIE_ATR.len() || atr[0] != 0x3B {
-        return format!("card ATR: {hex}");
+    /// The raw bytes, as `getBytes`.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
-    let not_required = |byte: u8| {
-        if byte == 0 {
-            format!("{byte} (not required)")
-        } else {
-            byte.to_string()
+
+    /// Whether [`crate::Session::open`] accepts the card, judged from these bytes alone without
+    /// touching it; `Ok` does not promise the rest of `open` succeeds.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BurnedDnie`] and [`Error::LegacyDnie`] for a DNIe that is not a usable 3.0/4.0,
+    /// [`Error::NotDnie`] for any other card.
+    pub fn check(&self) -> Result<(), Error> {
+        let atr = self.as_bytes();
+        if !has_dnie_tag(atr) {
+            return Err(Error::NotDnie);
         }
-    };
-    let name: String = atr[7..=10].iter().map(|&byte| char::from(byte)).collect();
-    let maker = match atr[11] {
-        0x10 => "Sagem / Morpho",
-        0x20 => "Siemens / Atos",
-        _ => UNKNOWN,
-    };
-    let chip_maker = match atr[12] {
-        0x01 => "Infineon",
-        0x02 => "STMicroelectronics",
-        _ => UNKNOWN,
-    };
-    let chip_type = match (atr[13], atr[14]) {
-        (0x01, 0x55) => "SLE78CLX408AP",
-        (0x4C, 0x34) => "19WL34",
-        _ => UNKNOWN,
-    };
-    let phase = match atr[17] {
-        0x00 => "pre-personalisation",
-        0x01 => "personalisation",
-        0x03 => "user",
-        0x0F => "final",
-        _ => UNKNOWN,
-    };
-    let state = match (atr[18], atr[19]) {
-        (0x90, 0x00) => "correct",
-        (0x65, 0x81) => "volatile memory erased",
-        _ => UNKNOWN,
-    };
-    format!(
-        "DNIe ATR: {hex}\n  Vpp (programming voltage): {}\n  Extra guard time: {}\n  Card name: {name}\n  Match-on-Card maker: {maker}\n  Chip maker: {chip_maker}\n  Chip type: {chip_type}\n  OS version: {:02X}.{:02X}\n  Life-cycle phase: {phase}\n  State: {state}",
-        not_required(atr[3]),
-        not_required(atr[4]),
-        atr[15],
-        atr[16],
-    )
+        if atr.ends_with(&BURNED_STATUS) {
+            return Err(Error::BurnedDnie);
+        }
+        if !matches_mask(atr) {
+            return Err(Error::NotDnie);
+        }
+        if atr[OS_VERSION] != DNIE_3_OS {
+            return Err(Error::LegacyDnie);
+        }
+        Ok(())
+    }
+}
+
+/// In words for logs; any ATR that is not 20 bytes starting with `3B` gives its hex bytes only.
+impl fmt::Display for Atr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let atr = self.as_bytes();
+        let hex = hex(atr);
+        if atr.len() != DNIE_ATR.len() || atr[0] != 0x3B {
+            return write!(f, "card ATR: {hex}");
+        }
+        let not_required = |byte: u8| {
+            if byte == 0 {
+                format!("{byte} (not required)")
+            } else {
+                byte.to_string()
+            }
+        };
+        let name: String = atr[7..=10].iter().map(|&byte| char::from(byte)).collect();
+        let maker = match atr[11] {
+            0x10 => "Sagem / Morpho",
+            0x20 => "Siemens / Atos",
+            _ => UNKNOWN,
+        };
+        let chip_maker = match atr[12] {
+            0x01 => "Infineon",
+            0x02 => "STMicroelectronics",
+            _ => UNKNOWN,
+        };
+        let chip_type = match (atr[13], atr[14]) {
+            (0x01, 0x55) => "SLE78CLX408AP",
+            (0x4C, 0x34) => "19WL34",
+            _ => UNKNOWN,
+        };
+        let phase = match atr[17] {
+            0x00 => "pre-personalisation",
+            0x01 => "personalisation",
+            0x03 => "user",
+            0x0F => "final",
+            _ => UNKNOWN,
+        };
+        let state = match (atr[18], atr[19]) {
+            (0x90, 0x00) => "correct",
+            (0x65, 0x81) => "volatile memory erased",
+            _ => UNKNOWN,
+        };
+        write!(
+            f,
+            "DNIe ATR: {hex}\n  Vpp (programming voltage): {}\n  Extra guard time: {}\n  Card name: {name}\n  Match-on-Card maker: {maker}\n  Chip maker: {chip_maker}\n  Chip type: {chip_type}\n  OS version: {:02X}.{:02X}\n  Life-cycle phase: {phase}\n  State: {state}",
+            not_required(atr[3]),
+            not_required(atr[4]),
+            atr[15],
+            atr[16],
+        )
+    }
+}
+
+fn has_dnie_tag(atr: &[u8]) -> bool {
+    atr.first() == Some(&0x3B) && atr.windows(DNIE_TAG.len()).any(|window| window == DNIE_TAG)
 }
 
 fn hex(bytes: &[u8]) -> String {

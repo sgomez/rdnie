@@ -155,6 +155,14 @@ fn scanning_takes_a_burned_dnie_so_the_session_reports_it() {
 }
 
 #[test]
+fn scanning_takes_a_legacy_dnie_so_the_session_reports_it() {
+    let mut legacy = DNIE_3;
+    legacy[15] = 0x01;
+    let scan = first_dnie([card("A", &OTHER_CARD), card("B", &legacy)]);
+    assert_eq!(scan.ok().as_deref(), Some("B"));
+}
+
+#[test]
 fn scanning_prefers_a_wrong_card_over_an_empty_reader() {
     let scan = first_dnie([Probe::Empty, card("B", &OTHER_CARD), Probe::Empty]);
     assert!(matches!(scan, Err(Error::NotDnie)));
