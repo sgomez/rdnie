@@ -6,6 +6,7 @@ extern crate self as rdnie;
 
 mod apdu;
 mod atr;
+mod card_authenticator;
 mod certificates;
 mod cwa14890;
 #[cfg(test)]
