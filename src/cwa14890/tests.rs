@@ -20,7 +20,7 @@ use crate::{
         EmulatedDnie, HandshakeFault, component_certificate, component_root_public_key,
         foreign_root_public_key, intermediate_certificate,
     },
-    key_sets::{Channel, ComponentRoots, KeySet},
+    key_sets::{Channel, ComponentRoots, KeyGeneration, KeySet},
     recorder::Recorder,
     session::tests::{card_with_channel, open},
 };
@@ -266,7 +266,7 @@ impl Transport for AcceptingCard {
 
 #[test]
 fn sends_the_smaller_of_the_signature_and_its_complement_to_the_card() {
-    let keys = KeySet::for_card(None, Channel::User);
+    let keys = KeySet::for_generation(KeyGeneration::Second, Channel::User);
     let icc = RsaPrivateKey::new(&mut OsRng, (keys.modulus.len() + 1) * 8).unwrap();
     let half = BigUint::from_bytes_be(keys.modulus) / 2_u8;
     // Each handshake draws a fresh frame, so half of them sign above N.IFD / 2.

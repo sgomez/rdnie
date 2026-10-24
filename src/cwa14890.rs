@@ -207,7 +207,10 @@ fn decode_certificate(encoded: &[u8]) -> Option<StoredCertificate> {
 /// authentication of a PIN channel without IDESP, and returns whether a root signed the certificate.
 #[cfg(any(test, fuzzing))]
 pub(crate) fn check_answers(input: &[u8], roots: &ComponentRoots) -> Result<bool, Error> {
-    let keys = KeySet::for_card(None, crate::key_sets::Channel::Pin);
+    let keys = KeySet::for_generation(
+        crate::key_sets::KeyGeneration::Second,
+        crate::key_sets::Channel::Pin,
+    );
     let (challenge, rest) = input
         .split_at_checked(CHALLENGE_LENGTH + keys.terminal_chr.len())
         .ok_or(MALFORMED_CERTIFICATE)?;

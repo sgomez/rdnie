@@ -50,6 +50,7 @@ use std::collections::BTreeMap;
 use crate::{
     Certificate, Error, HashAlgorithm, KeyReference, Pin, StatusWord, Transport,
     atr::check_dnie_3,
+    card_authenticator::CardAuthenticator,
     certificates,
     files::{self, Location},
     key_sets::{ComponentRoots, KeyGeneration},
@@ -65,9 +66,7 @@ const FILE_NOT_FOUND: StatusWord = StatusWord(0x6A82);
 /// after it. The session does not recover: open a new transport and a new session.
 pub struct Session<T: Transport> {
     transport: T,
-    /// Support number, which picks the channel key set; card data, so never logged.
-    idesp: Option<String>,
-    roots: ComponentRoots,
+    authenticator: CardAuthenticator,
     /// The count [`Session::pin_retries`] last showed, which the next sign expects.
     shown_retries: Option<u8>,
     /// The CDF, the PrKDF and the DER of each label, each read on first request and then kept.
@@ -111,8 +110,7 @@ impl<T: Transport> Session<T> {
         let idesp = transport.transaction(read_idesp)?;
         Ok(Self {
             transport,
-            idesp,
-            roots,
+            authenticator: CardAuthenticator::from_idesp(idesp.as_deref(), roots),
             shown_retries: None,
             cdf: None,
             prkdf: None,
@@ -167,10 +165,9 @@ impl<T: Transport> Session<T> {
     /// `GET CHIP INFO` or gives no retry count, and [`Error::CardReset`] or [`Error::Transport`]
     /// if either strikes during the authentication.
     pub fn pin_retries(&mut self) -> Result<u8, Error> {
-        let idesp = self.idesp.as_deref();
-        let roots = &self.roots;
+        let authenticator = &self.authenticator;
         let retries = operation(&mut self.transport, |card| {
-            pin::retries_left(card, idesp, roots)
+            pin::retries_left(card, authenticator)
         })?;
         self.shown_retries = Some(retries);
         Ok(retries)
@@ -202,10 +199,9 @@ impl<T: Transport> Session<T> {
         if retries == 0 {
             return Err(Error::PinBlocked);
         }
-        let idesp = self.idesp.as_deref();
-        let roots = &self.roots;
+        let authenticator = &self.authenticator;
         operation(&mut self.transport, |card| {
-            let mut channel = pin::verify(card, idesp, roots, pin, retries)?;
+            let mut channel = pin::verify(card, authenticator, pin, retries)?;
             signature::sign(&mut channel, key, digest_info)
         })
     }
@@ -213,7 +209,7 @@ impl<T: Transport> Session<T> {
     /// The terminal key generation the card's support number selects.
     #[must_use]
     pub fn key_generation(&self) -> KeyGeneration {
-        KeyGeneration::of_card(self.idesp.as_deref())
+        self.authenticator.key_generation()
     }
 
     /// Ends the session and hands back the transport.
@@ -243,7 +239,7 @@ fn cached<'a, R>(
     Ok(slot.insert(value))
 }
 
-/// The IDESP in clear, or `None` if the card has no IDESP file or it is empty.
+/// The IDESP as stored, or `None` if the card has no IDESP file.
 fn read_idesp(card: &mut dyn Transport) -> Result<Option<String>, Error> {
     let location = Location::new(IDESP).expect("the IDESP path is valid");
     let idesp = match files::read(card, &location) {
@@ -251,7 +247,7 @@ fn read_idesp(card: &mut dyn Transport) -> Result<Option<String>, Error> {
         Err(Error::Status(FILE_NOT_FOUND)) => return Ok(None),
         Err(error) => return Err(error),
     };
-    Ok((!idesp.is_empty()).then(|| String::from_utf8_lossy(&idesp).into_owned()))
+    Ok(Some(String::from_utf8_lossy(&idesp).into_owned()))
 }
 
 #[cfg(test)]

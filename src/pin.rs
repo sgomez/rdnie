@@ -43,14 +43,12 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-//! The PIN channel, the retry counter and `VERIFY` sent through it, and the switch to the user
-//! channel, as `Dnie` and `Dnie3` run them.
+//! The retry counter and `VERIFY` sent through the PIN channel, as `Dnie` and `Dnie3` run them.
 
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    Command, Error, StatusWord, Transport, cwa14890, files,
-    key_sets::{Channel, ComponentRoots, KeySet},
+    Command, Error, StatusWord, Transport, card_authenticator::CardAuthenticator,
     secure_messaging::SecureChannel,
 };
 
@@ -94,10 +92,9 @@ const BLOCKED: StatusWord = StatusWord(0x6983);
 /// Opens the PIN channel and reads how many PIN attempts are left, without sending a PIN.
 pub(crate) fn retries_left(
     card: &mut dyn Transport,
-    idesp: Option<&str>,
-    roots: &ComponentRoots,
+    authenticator: &CardAuthenticator,
 ) -> Result<u8, Error> {
-    let mut channel = open_pin_channel(card, idesp, roots)?;
+    let mut channel = authenticator.open_pin_channel(card)?;
     query_retries(&mut channel)
 }
 
@@ -105,12 +102,11 @@ pub(crate) fn retries_left(
 /// the PIN channel and returns the user channel over `card`.
 pub(crate) fn verify<'a>(
     card: &'a mut dyn Transport,
-    idesp: Option<&str>,
-    roots: &ComponentRoots,
+    authenticator: &CardAuthenticator,
     pin: Pin,
     expected: u8,
 ) -> Result<SecureChannel<'a>, Error> {
-    let mut channel = open_pin_channel(card, idesp, roots)?;
+    let mut channel = authenticator.open_pin_channel(card)?;
     let retries = query_retries(&mut channel)?;
     if retries == 0 {
         return Err(Error::PinBlocked);
@@ -133,7 +129,7 @@ pub(crate) fn verify<'a>(
     if response.status != StatusWord::SUCCESS {
         return Err(refusal(response.status));
     }
-    open_user_channel(channel, idesp, roots)
+    authenticator.open_user_channel(channel)
 }
 
 /// What a status word other than success means for a `VERIFY` that carried the PIN.
@@ -167,30 +163,4 @@ fn query_retries(channel: &mut SecureChannel<'_>) -> Result<u8, Error> {
         None if response.status == BLOCKED => Err(Error::PinBlocked),
         None => Err(Error::Status(response.status)),
     }
-}
-
-/// Selects the master file, whose refusal `Dnie3` only warns about, then authenticates.
-fn open_pin_channel<'a>(
-    card: &'a mut dyn Transport,
-    idesp: Option<&str>,
-    roots: &ComponentRoots,
-) -> Result<SecureChannel<'a>, Error> {
-    match files::select_master_file(card) {
-        Ok(()) | Err(Error::Status(_)) => {}
-        Err(error) => return Err(error),
-    }
-    cwa14890::open(card, KeySet::for_card(idesp, Channel::Pin), roots)
-}
-
-/// Selects the master file and authenticates with the user keys, all through the PIN channel, as
-/// `Dnie3.openUserChannel` does, and drops the PIN channel.
-fn open_user_channel<'a>(
-    mut pin_channel: SecureChannel<'a>,
-    idesp: Option<&str>,
-    roots: &ComponentRoots,
-) -> Result<SecureChannel<'a>, Error> {
-    pin_channel
-        .transmit(&files::master_file_selection())?
-        .into_success()?;
-    cwa14890::open_inside(pin_channel, KeySet::for_card(idesp, Channel::User), roots)
 }

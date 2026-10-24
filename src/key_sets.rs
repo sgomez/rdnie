@@ -47,8 +47,8 @@
 // SIN NINGUNA GARANTIA; incluso sin la garantia implicita de comercializacion
 // o idoneidad para un proposito particular.
 
-//! Terminal key sets of the CWA-14890 channels, picked by IDESP as `DnieFactory` does, and the
-//! roots of the chip's component certificates.
+//! Terminal key sets of the CWA-14890 channels, picked by key generation and channel, and the roots
+//! of the chip's component certificates.
 
 use rsa::{BigUint, RsaPrivateKey, RsaPublicKey, pkcs8::DecodePublicKey};
 
@@ -58,8 +58,6 @@ mod second_generation;
 pub(crate) use first_generation::{R1_PIN, R1_USER};
 pub(crate) use second_generation::{R2_PIN, R2_USER};
 
-/// Support numbers from this one on take the second key generation.
-const R2_IDESP: &str = "BMP100001";
 const PUBLIC_EXPONENT: u32 = 65_537;
 
 /// Root CA public key the card checks the CA CVC with.
@@ -144,16 +142,6 @@ pub enum KeyGeneration {
     Second,
 }
 
-impl KeyGeneration {
-    pub(crate) fn of_card(idesp: Option<&str>) -> Self {
-        if idesp.is_some_and(|idesp| !idesp.is_empty() && idesp < R2_IDESP) {
-            Self::First
-        } else {
-            Self::Second
-        }
-    }
-}
-
 /// Channel a key set opens.
 #[derive(Clone, Copy)]
 pub(crate) enum Channel {
@@ -172,9 +160,9 @@ pub(crate) struct KeySet {
 }
 
 impl KeySet {
-    /// The set for `channel` on a card with `idesp`; the second generation if it is unknown.
-    pub(crate) fn for_card(idesp: Option<&str>, channel: Channel) -> &'static Self {
-        match (KeyGeneration::of_card(idesp), channel) {
+    /// The set for `channel` in `generation`.
+    pub(crate) fn for_generation(generation: KeyGeneration, channel: Channel) -> &'static Self {
+        match (generation, channel) {
             (KeyGeneration::First, Channel::Pin) => &R1_PIN,
             (KeyGeneration::First, Channel::User) => &R1_USER,
             (KeyGeneration::Second, Channel::Pin) => &R2_PIN,
