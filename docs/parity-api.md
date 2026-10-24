@@ -29,7 +29,7 @@ JMulticard `4ec9494` against rdnie `c179c86`. Java paths are relative to `jmulti
 | `ApduConnection.open`, `close`, `isOpen` | `PcscTransport::connect`, `Drop` | Changed |
 | `ApduConnection.setProtocol` | — | Not ported |
 | `SmartcardIoConnection.setExclusiveUse` | `Transport::transaction` | Changed |
-| `CommandApdu` | — | Changed |
+| `CommandApdu` | — | Not ported |
 | `ResponseApdu` | `Response` | Same |
 | `StatusWord` | `StatusWord` | Same |
 | `DnieAtr.toString` | `describe_atr` | Changed |
@@ -135,10 +135,6 @@ A connected value is open; dropping it leaves the card (parity.md:143).
 
 One PC/SC transaction per operation: nothing slips in mid-operation, and the reader is free while the holder types the PIN (parity.md:75; #1). The body receives a `Port`. A closure, because `pcsc` only offers a borrowing guard and `unsafe` is forbidden (PR #15).
 
-### `CommandApdu` → crate-private `Command`
-
-Short APDUs only (parity.md:72). Hidden so its public fields stop binding semver while no consumer builds commands (#170).
-
 ### `DnieAtr.toString` → `describe_atr`
 
 A free function, since rdnie has no ATR type (PR #58); for support logs (#47).
@@ -182,6 +178,10 @@ Raw RSA, for decryption and other signature formats; rFirma needs neither (parit
 ### `CryptoHelper`
 
 Cryptography comes from RustCrypto (CLAUDE.md constraint 2); the caller supplies no provider.
+
+### `CommandApdu`
+
+Crate-private as `Command`, short APDUs only (parity.md:72). Hidden so its public fields stop binding semver while no consumer builds commands (#170).
 
 ## Out of scope
 
