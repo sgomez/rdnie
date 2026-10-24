@@ -14,7 +14,7 @@
 
 use rdnie::{
     DigestAlgorithm, Error, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration, PcscTransport, Pin,
-    SIGNATURE_LABEL, Session, Transport, describe_atr,
+    SIGNATURE_LABEL, Session, Transport,
 };
 use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
 use sha2_010::{Digest, Sha256};
@@ -48,7 +48,7 @@ fn run() -> Result<(), Error> {
     };
     println!("reader: {}", transport.reader());
     let atr = transport.atr()?;
-    println!("{}", describe_atr(&atr));
+    println!("{atr}");
 
     let mut session = timed("open", || Session::open(transport)).inspect_err(|error| {
         if let Error::Status(status) = error {

@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeSet, fs, path::Path};
 
-use rdnie::{Error, Port, Transport};
+use rdnie::{Atr, Error, Port, Transport};
 
 /// Keeps every command and the raw response the card gave it.
 pub struct Recorder<T> {
@@ -20,7 +20,7 @@ impl<T> Recorder<T> {
 }
 
 impl<T: Transport> Transport for Recorder<T> {
-    fn atr(&self) -> Result<Vec<u8>, Error> {
+    fn atr(&self) -> Result<Atr, Error> {
         self.card.atr()
     }
 

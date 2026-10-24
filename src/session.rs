@@ -6,8 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    DigestAlgorithm, Error, KeyReference, Pin, StatusWord, Transport,
-    atr::check_dnie_3,
+    Atr, DigestAlgorithm, Error, KeyReference, Pin, StatusWord, Transport,
     card_authenticator::CardAuthenticator,
     certificates,
     channel::{CommandChannel, PlainChannel},
@@ -26,6 +25,7 @@ const FILE_NOT_FOUND: StatusWord = StatusWord(0x6A82);
 /// after it. The session does not recover: open a new transport and a new session.
 pub struct Session<T: Transport> {
     transport: T,
+    atr: Atr,
     pin_guard: PinGuard,
     /// The CDF, the PrKDF and the DER of each label, each read on first request and then kept.
     cdf: Option<Vec<pkcs15::Entry>>,
@@ -64,10 +64,12 @@ impl<T: Transport> Session<T> {
     }
 
     fn open_with(mut transport: T, roots: ComponentRoots) -> Result<Self, Error> {
-        check_dnie_3(&transport.atr()?)?;
+        let atr = transport.atr()?;
+        atr.check()?;
         let idesp = operation(&mut transport, read_idesp)?;
         Ok(Self {
             transport,
+            atr,
             pin_guard: PinGuard::new(CardAuthenticator::from_idesp(idesp.as_deref(), roots)),
             cdf: None,
             prkdf: None,
@@ -179,6 +181,12 @@ impl<T: Transport> Session<T> {
     pub fn verify_pin(&mut self, pin: Pin) -> Result<(), Error> {
         self.pin_guard
             .verified(&mut self.transport, pin, |_| Ok(()))
+    }
+
+    /// The ATR [`Session::open`] classified, without touching the card.
+    #[must_use]
+    pub fn atr(&self) -> &Atr {
+        &self.atr
     }
 
     /// The terminal key generation the card's support number selects.

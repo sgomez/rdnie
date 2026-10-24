@@ -3,7 +3,7 @@ use super::*;
 struct Unplugged(EmulatedDnie, bool);
 
 impl crate::Transport for Unplugged {
-    fn atr(&self) -> Result<Vec<u8>, Error> {
+    fn atr(&self) -> Result<crate::Atr, Error> {
         self.0.atr()
     }
 
