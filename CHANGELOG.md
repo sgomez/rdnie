@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- *(session)* `sign` reports a wrong digest length before an invalid PIN format
+- *(session)* after `WrongPin { retries_left }`, the next `sign` expects `retries_left` instead of reading the retries again
+
 ## [0.2.0](https://github.com/sgomez/rdnie/compare/rdnie-v0.1.2...rdnie-v0.2.0) - 2026-10-24
 
 ### Added

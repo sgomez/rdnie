@@ -1,11 +1,11 @@
 // Derived from JMulticard: see LICENSE.jmulticard.md.
 
-//! The retry counter and `VERIFY` sent through the PIN channel, as `Dnie` and `Dnie3` run them.
+//! The PIN guard: the retry counter and `VERIFY` through the PIN channel, as `Dnie` and `Dnie3` run them.
 
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    Command, Error, StatusWord, Transport, card_authenticator::CardAuthenticator,
+    Command, Error, KeyGeneration, StatusWord, Transport, card_authenticator::CardAuthenticator,
     secure_messaging::SecureChannel,
 };
 
@@ -46,31 +46,72 @@ const RETRIES_MASK: u8 = 0xF0;
 const RETRIES_TAG: u8 = 0xC0;
 const BLOCKED: StatusWord = StatusWord(0x6983);
 
-/// Opens the PIN channel and reads how many PIN attempts are left, without sending a PIN.
-pub(crate) fn retries_left(
-    card: &mut dyn Transport,
-    authenticator: &CardAuthenticator,
-) -> Result<u8, Error> {
-    let mut channel = authenticator.open_pin_channel(card)?;
-    query_retries(&mut channel)
+/// The never-blind PIN policy: the card authenticator and the retries count last shown, which the
+/// next verified operation expects.
+pub(crate) struct PinGuard {
+    authenticator: CardAuthenticator,
+    shown: Option<u8>,
 }
 
-/// Rereads the retries and, if they are still `expected` and not zero, sends `pin` once through
-/// the PIN channel and returns the user channel over `card`.
-pub(crate) fn verify<'a>(
-    card: &'a mut dyn Transport,
-    authenticator: &CardAuthenticator,
-    pin: Pin,
-    expected: u8,
-) -> Result<SecureChannel<'a>, Error> {
-    let mut channel = authenticator.open_pin_channel(card)?;
-    let retries = query_retries(&mut channel)?;
-    if retries == 0 {
-        return Err(Error::PinBlocked);
+impl PinGuard {
+    pub(crate) fn new(authenticator: CardAuthenticator) -> Self {
+        Self {
+            authenticator,
+            shown: None,
+        }
     }
-    if retries != expected {
-        return Err(Error::PinRetriesChanged);
+
+    pub(crate) fn key_generation(&self) -> KeyGeneration {
+        self.authenticator.key_generation()
     }
+
+    /// Reads the retries in their own transaction and records them as shown; a failed read
+    /// leaves the count shown before.
+    pub(crate) fn read_retries(&mut self, transport: &mut impl Transport) -> Result<u8, Error> {
+        let retries = self.query(transport)?;
+        self.shown = Some(retries);
+        Ok(retries)
+    }
+
+    /// Sends `pin` once, after rereading the retries shown, and runs `work` over the user channel,
+    /// all in one transaction; the retries are read first in their own if none were shown.
+    pub(crate) fn verified<R>(
+        &mut self,
+        transport: &mut impl Transport,
+        pin: Pin,
+        work: impl FnOnce(&mut SecureChannel<'_>) -> Result<R, Error>,
+    ) -> Result<R, Error> {
+        pin.check_format()?;
+        let expected = match self.shown.take() {
+            Some(shown) => shown,
+            None => self.query(transport)?,
+        };
+        if expected == 0 {
+            return Err(Error::PinBlocked);
+        }
+        let authenticator = &self.authenticator;
+        let result = transport.transaction(|card| {
+            let mut channel = authenticator.open_pin_channel(card)?;
+            match query_retries(&mut channel)? {
+                0 => return Err(Error::PinBlocked),
+                retries if retries != expected => return Err(Error::PinRetriesChanged),
+                _ => {}
+            }
+            send_verify(&mut channel, pin)?;
+            work(&mut authenticator.open_user_channel(channel)?)
+        });
+        if let Err(Error::WrongPin { retries_left }) = result {
+            self.shown = Some(retries_left);
+        }
+        result
+    }
+
+    fn query(&self, transport: &mut impl Transport) -> Result<u8, Error> {
+        transport.transaction(|card| query_retries(&mut self.authenticator.open_pin_channel(card)?))
+    }
+}
+
+fn send_verify(channel: &mut SecureChannel<'_>, pin: Pin) -> Result<(), Error> {
     let mut command = Command {
         cla: 0x00,
         ins: VERIFY,
@@ -86,7 +127,7 @@ pub(crate) fn verify<'a>(
     if response.status != StatusWord::SUCCESS {
         return Err(refusal(response.status));
     }
-    authenticator.open_user_channel(channel)
+    Ok(())
 }
 
 /// What a status word other than success means for a `VERIFY` that carried the PIN.
