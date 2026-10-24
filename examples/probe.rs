@@ -8,13 +8,13 @@
 //!
 //! 1. With Firefox (through `OpenSC`) logged in with the DNIe, run the probe, then confirm Firefox
 //!    still works with the card.
-//! 2. Run `--leave-channel` twice in a row: it opens a session, runs `pin_retries()`, leaves its
+//! 2. Run `--leave-channel` twice in a row: it opens a session, runs `pin_retries_left()`, leaves its
 //!    channel open and exits without a reset, so the second run starts on a card with a leftover
 //!    channel and must still pass.
 
 use rdnie::{
-    Certificate, Error, HashAlgorithm, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration, PcscTransport,
-    Pin, SIGNATURE_LABEL, Session, Transport, describe_atr,
+    Certificate, DigestAlgorithm, Error, Holder, INTERMEDIATE_CA_LABEL, KeyGeneration,
+    PcscTransport, Pin, SIGNATURE_LABEL, Session, Transport, describe_atr,
 };
 use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
 use sha2_010::{Digest, Sha256};
@@ -60,7 +60,7 @@ fn run() -> Result<(), Error> {
         .iter()
         .any(|argument| argument == "--leave-channel")
     {
-        let retries = timed("pin_retries", || session.pin_retries())?;
+        let retries = timed("pin_retries_left", || session.pin_retries_left())?;
         println!("retries: {retries}");
         println!("left the channel open, no reset");
         return Ok(());
@@ -110,7 +110,7 @@ fn run() -> Result<(), Error> {
         );
         certificates.push((certificate, der));
     }
-    match timed("pin_retries", || session.pin_retries()) {
+    match timed("pin_retries_left", || session.pin_retries_left()) {
         Ok(retries) => {
             println!("component certificate: pass");
             println!("retries: {retries}");
@@ -152,7 +152,7 @@ fn sign(
         println!("signature certificate: not found");
         return Ok(());
     };
-    let retries = session.pin_retries()?;
+    let retries = session.pin_retries_left()?;
     println!("retries before the PIN: {retries}");
 
     let pin = rpassword::prompt_password("PIN (not shown): ")
@@ -160,7 +160,7 @@ fn sign(
     let digest = Sha256::digest(b"rdnie probe");
     let signature = match session.sign(
         &digest,
-        HashAlgorithm::Sha256,
+        DigestAlgorithm::Sha256,
         &certificate.key,
         Pin::new(pin),
     ) {

@@ -5,17 +5,17 @@ fn signs_digests_that_verify_with_the_certificate() {
     let data = b"document";
     let cases = [
         (
-            HashAlgorithm::Sha256,
+            DigestAlgorithm::Sha256,
             Pkcs1v15Sign::new::<Sha256>(),
             Sha256::digest(data).to_vec(),
         ),
         (
-            HashAlgorithm::Sha384,
+            DigestAlgorithm::Sha384,
             Pkcs1v15Sign::new::<Sha384>(),
             Sha384::digest(data).to_vec(),
         ),
         (
-            HashAlgorithm::Sha512,
+            DigestAlgorithm::Sha512,
             Pkcs1v15Sign::new::<Sha512>(),
             Sha512::digest(data).to_vec(),
         ),
@@ -35,7 +35,7 @@ fn rejects_a_digest_of_another_length_before_any_apdu() {
     let sent = session.transport.commands();
     let result = session.sign(
         &[0; 48],
-        HashAlgorithm::Sha256,
+        DigestAlgorithm::Sha256,
         &key,
         Pin::new(DEFAULT_PIN.to_owned()),
     );
@@ -52,7 +52,7 @@ fn rejects_a_digest_of_another_length_before_any_apdu() {
 #[test]
 fn verifies_the_pin_in_a_fresh_transaction_after_reading_the_retries() {
     let mut session = open(signing_card());
-    sign_with(&mut session, &[0; 32], HashAlgorithm::Sha256).unwrap();
+    sign_with(&mut session, &[0; 32], DigestAlgorithm::Sha256).unwrap();
     let queries = session.transport.pin_queries();
     let read = queries.iter().find(|query| !query.with_pin).unwrap();
     let verified = queries.iter().find(|query| query.with_pin).unwrap();
@@ -77,7 +77,7 @@ fn opens_the_user_channel_inside_the_pin_channel() {
 #[test]
 fn signing_with_a_listed_key_reads_no_certificate_file() {
     let mut session = open(signing_card());
-    sign_with(&mut session, &[0; 32], HashAlgorithm::Sha256).unwrap();
+    sign_with(&mut session, &[0; 32], DigestAlgorithm::Sha256).unwrap();
     assert_eq!(certificate_files_selected(&session.transport), []);
 }
 
@@ -87,7 +87,7 @@ fn reports_a_wrong_digest_length_before_an_invalid_pin_format() {
     let key = session.certificates().unwrap().remove(0).key;
     let result = session.sign(
         &[0; 48],
-        HashAlgorithm::Sha256,
+        DigestAlgorithm::Sha256,
         &key,
         Pin::new("short".to_owned()),
     );

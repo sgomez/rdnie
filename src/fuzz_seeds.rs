@@ -39,7 +39,7 @@ fn recorded_protected_responses(shape: ResponseShape) -> Vec<Vec<u8>> {
     let roots = ComponentRoots::only(component_root_public_key());
     let card = Recorder::new(card_with_channel().shaping_responses(shape));
     let mut session = Session::open_with_roots(card, roots).unwrap();
-    let _ = session.pin_retries();
+    let _ = session.pin_retries_left();
     session
         .into_transport()
         .exchanges

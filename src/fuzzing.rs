@@ -22,19 +22,25 @@ pub fn files(fci: &[u8]) -> Result<usize, Error> {
 
 /// The response the card protects for the fixed channel: the first two bytes are its status word and
 /// the rest, cut to whole blocks, its plain data with any padding.
-pub fn secure_messaging(input: &[u8]) -> Result<Response, Error> {
+pub fn secure_messaging(input: &[u8]) -> Result<(Vec<u8>, StatusWord), Error> {
     let Some((status, plain)) = input.split_first_chunk() else {
-        return Response::parse(input);
+        return Response::parse(input).map(split);
     };
     let plain = &plain[..plain.len() - plain.len() % BLOCK];
     let mut channel = SecureMessaging::fixed();
     let protected = channel.protected_response(plain, StatusWord(u16::from_be_bytes(*status)));
-    channel.unprotect(&Response::parse(&protected)?)
+    channel.unprotect(&Response::parse(&protected)?).map(split)
 }
 
 /// A protected response as it arrives, checked against the fixed channel.
-pub fn secure_messaging_raw(raw: &[u8]) -> Result<Response, Error> {
-    SecureMessaging::fixed().unprotect(&Response::parse(raw)?)
+pub fn secure_messaging_raw(raw: &[u8]) -> Result<(Vec<u8>, StatusWord), Error> {
+    SecureMessaging::fixed()
+        .unprotect(&Response::parse(raw)?)
+        .map(split)
+}
+
+fn split(response: Response) -> (Vec<u8>, StatusWord) {
+    (response.data, response.status)
 }
 
 /// The internal authentication challenge, a component certificate and the card's answer.

@@ -41,7 +41,7 @@ fn opens_without_resetting_the_card() {
 fn opens_twice_on_the_same_card() {
     let card = open(card_with_channel()).into_transport();
     let mut session = open(card);
-    assert_eq!(session.pin_retries().unwrap(), 3);
+    assert_eq!(session.pin_retries_left().unwrap(), 3);
     assert_eq!(session.transport.resets(), 0);
 }
 
@@ -49,17 +49,17 @@ fn opens_twice_on_the_same_card() {
 fn opens_after_an_operation_left_a_channel_open() {
     let card = card_accepting(&[&R1_PIN]).with_idesp(b"BMP100000");
     let mut first = open(card);
-    first.pin_retries().unwrap();
+    first.pin_retries_left().unwrap();
     let mut session = open(first.into_transport());
     assert_eq!(session.key_generation(), KeyGeneration::First);
-    assert_eq!(session.pin_retries().unwrap(), 3);
+    assert_eq!(session.pin_retries_left().unwrap(), 3);
     assert_eq!(session.transport.resets(), 0);
 }
 
 #[test]
 fn reads_after_a_channel_left_open_between_operations() {
     let mut session = open(signing_card());
-    session.pin_retries().unwrap();
+    session.pin_retries_left().unwrap();
     assert_eq!(session.certificates().unwrap().len(), 1);
 }
 

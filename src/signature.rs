@@ -20,10 +20,10 @@ const SHA512_HEADER: &[u8] = &[
 ];
 const PRIVATE_KEY_REFERENCE: u8 = 0x84;
 
-/// Hash algorithm of the digest to sign.
+/// Digest algorithm of the digest to sign.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum HashAlgorithm {
+pub enum DigestAlgorithm {
     /// SHA-256.
     Sha256,
     /// SHA-384.
@@ -32,7 +32,14 @@ pub enum HashAlgorithm {
     Sha512,
 }
 
-impl HashAlgorithm {
+impl DigestAlgorithm {
+    /// Length in bytes of a digest of this algorithm.
+    #[must_use]
+    pub fn digest_length(self) -> usize {
+        let header = self.digest_info_header();
+        usize::from(header[header.len() - 1])
+    }
+
     fn digest_info_header(self) -> &'static [u8] {
         match self {
             Self::Sha256 => SHA256_HEADER,
@@ -43,16 +50,15 @@ impl HashAlgorithm {
 }
 
 /// The PKCS#1 `DigestInfo` of `digest`, if its length is the one `algorithm` produces.
-pub(crate) fn digest_info(algorithm: HashAlgorithm, digest: &[u8]) -> Result<Vec<u8>, Error> {
-    let header = algorithm.digest_info_header();
-    let expected = usize::from(header[header.len() - 1]);
+pub(crate) fn digest_info(algorithm: DigestAlgorithm, digest: &[u8]) -> Result<Vec<u8>, Error> {
+    let expected = algorithm.digest_length();
     if digest.len() != expected {
         return Err(Error::DigestLength {
             expected,
             actual: digest.len(),
         });
     }
-    Ok([header, digest].concat())
+    Ok([algorithm.digest_info_header(), digest].concat())
 }
 
 /// Selects `key` with `MSE SET DST` and has the card sign `digest_info` with `PSO`.

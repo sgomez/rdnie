@@ -25,7 +25,7 @@ rdnie = "0.1"
 ```
 
 ```rust
-use rdnie::{HashAlgorithm, PcscTransport, Pin, SIGNATURE_LABEL, Session};
+use rdnie::{DigestAlgorithm, PcscTransport, Pin, SIGNATURE_LABEL, Session};
 use sha2::{Digest, Sha256};
 
 fn main() -> Result<(), rdnie::Error> {
@@ -36,10 +36,10 @@ fn main() -> Result<(), rdnie::Error> {
         .find(|certificate| certificate.label == SIGNATURE_LABEL)
         .expect("a DNIe has a signature certificate");
 
-    let retries = session.pin_retries()?;
+    let retries = session.pin_retries_left()?;
     let pin = Pin::new(ask_holder_for_pin(retries));
     let digest = Sha256::digest(b"document");
-    let signature = session.sign(&digest, HashAlgorithm::Sha256, &signing.key, pin)?;
+    let signature = session.sign(&digest, DigestAlgorithm::Sha256, &signing.key, pin)?;
     Ok(())
 }
 ```
@@ -48,7 +48,7 @@ fn main() -> Result<(), rdnie::Error> {
 
 ## The PIN
 
-- **Never sent blind.** `sign` reads the retries again before VERIFY and stops without sending the PIN if they are 0 (`Error::PinBlocked`) or differ from those `pin_retries` showed (`Error::PinRetriesChanged`). Show the holder the retries before asking for the PIN.
+- **Never sent blind.** `sign` reads the retries again before VERIFY and stops without sending the PIN if they are 0 (`Error::PinBlocked`) or differ from those `pin_retries_left` showed (`Error::PinRetriesChanged`). Show the holder the retries before asking for the PIN.
 - **One attempt per call.** A wrong PIN returns `Error::WrongPin`, and nothing retries on its own, not even after a card reset.
 - **Checked before the card.** A PIN outside 8 to 16 characters fails with `Error::InvalidPinFormat` without spending an attempt.
 - **Wiped from memory.** `Pin` is zeroized when dropped, and no PIN or session key survives an operation.

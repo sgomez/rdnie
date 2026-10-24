@@ -11,7 +11,7 @@ JMulticard `4ec9494` against rdnie `c179c86`. Java paths are relative to `jmulti
 | `CryptoCard.getCertificate` | `Session::certificate` | Changed |
 | `CryptoCard.getPrivateKey` | `Certificate::key` | Changed |
 | `CryptoCard.sign` | `Session::sign` | Changed |
-| `Dnie3.getPinRetriesLeft` | `Session::pin_retries` | Changed |
+| `Dnie3.getPinRetriesLeft` | `Session::pin_retries_left` | Changed |
 | `Dnie3.openSecureChannelIfNotAlreadyOpened(true)` | `Session::verify_pin` | Changed |
 | `Dnie.verifyPin` | — | Not ported |
 | `Dnie.getSerialNumber` | — | Gap |
@@ -30,18 +30,18 @@ JMulticard `4ec9494` against rdnie `c179c86`. Java paths are relative to `jmulti
 | `ApduConnection.setProtocol` | — | Not ported |
 | `SmartcardIoConnection.setExclusiveUse` | `Transport::transaction` | Changed |
 | `CommandApdu` | — | Not ported |
-| `ResponseApdu` | `Response` | Same |
+| `ResponseApdu` | `Response` (crate-private) | Changed |
 | `StatusWord` | `StatusWord` | Same |
 | `DnieAtr.toString` | `describe_atr` | Changed |
 | Exceptions | `Error` | Changed |
 | `CryptoHelper` | — | Not ported |
-| Password callbacks | `Pin`, `Session::pin_retries` | Changed |
+| Password callbacks | `Pin`, `Session::pin_retries_left` | Changed |
 | `DnieFactory.getDnieNfc`, `getEmrtdNfc`, `Dnie3` data groups, SOD, card access | — | Out of scope |
 | — | `Transport::atr` | New |
 | — | `Session::open_trusting` | New |
 | — | `Session::into_transport` | New |
 | — | `KeyGeneration` | New |
-| — | `HashAlgorithm` | New |
+| — | `DigestAlgorithm` | New |
 | — | `SIGNATURE_LABEL`, `INTERMEDIATE_CA_LABEL` | New |
 | — | `is_dnie` | New |
 
@@ -84,7 +84,7 @@ Returned with the certificate. The fields are opaque; no recorded reason.
 - The retries are reread before the single VERIFY (parity.md:68).
 - A card reset returns `Error::CardReset` instead of retrying (parity.md:63).
 
-### `Dnie3.getPinRetriesLeft` → `Session::pin_retries`
+### `Dnie3.getPinRetriesLeft` → `Session::pin_retries_left`
 
 Opens its own PIN channel. Java needs an open channel and leaves the card in the PIN channel (parity.md:88).
 
@@ -92,7 +92,7 @@ Opens its own PIN channel. Java needs an open channel and leaves the card in the
 
 Verifies the PIN without signing, as Java's open-with-PIN does, but the channel is not kept: the next `sign` verifies again in its own transaction (parity.md:62). Same retries policy as `sign`.
 
-### `Dnie.setCallbackHandler`, `setPasswordCallback`, password callbacks → `Pin`, `Session::pin_retries`
+### `Dnie.setCallbackHandler`, `setPasswordCallback`, password callbacks → `Pin`, `Session::pin_retries_left`
 
 A driver has no UI: the consumer asks for the PIN and passes it (parity.md:47).
 
@@ -205,7 +205,7 @@ Hands the transport back. No recorded reason.
 
 The real-card probe prints r1 or r2 (PR #21).
 
-### `HashAlgorithm`
+### `DigestAlgorithm`
 
 The caller hashes; rdnie never sees the document (#1).
 

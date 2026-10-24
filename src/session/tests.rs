@@ -7,7 +7,7 @@ use rsa::{
 use x509_cert::der::{Decode, Encode};
 
 use crate::{
-    Error, HashAlgorithm, KeyGeneration, Pin, StatusWord,
+    DigestAlgorithm, Error, KeyGeneration, Pin, StatusWord,
     emulator::{
         DEFAULT_PIN, DNIE_3_ATR, Delivery, EmulatedDnie, HolderCertificate, ResponseShape, Step,
         TerminalKey, component_root_public_key,
@@ -58,7 +58,7 @@ fn certificate_files_selected(card: &EmulatedDnie) -> Vec<u8> {
 }
 
 fn retries(card: EmulatedDnie) -> Result<u8, Error> {
-    open(card).pin_retries()
+    open(card).pin_retries_left()
 }
 
 fn signing_card() -> EmulatedDnie {
@@ -68,7 +68,7 @@ fn signing_card() -> EmulatedDnie {
 fn sign_with(
     session: &mut Session<EmulatedDnie>,
     digest: &[u8],
-    algorithm: HashAlgorithm,
+    algorithm: DigestAlgorithm,
 ) -> Result<Vec<u8>, Error> {
     let key = session.certificates().unwrap().remove(0).key;
     session.sign(digest, algorithm, &key, Pin::new(DEFAULT_PIN.to_owned()))
@@ -92,7 +92,7 @@ fn sign_with_pin(card: EmulatedDnie, pin: &str) -> (Result<Vec<u8>, Error>, Emul
     let key = session.certificates().unwrap().remove(0).key;
     let result = session.sign(
         &[0; 32],
-        HashAlgorithm::Sha256,
+        DigestAlgorithm::Sha256,
         &key,
         Pin::new(pin.to_owned()),
     );
