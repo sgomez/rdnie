@@ -134,24 +134,6 @@ impl SecureMessaging {
         })
     }
 
-    /// Sends a command through the channel and returns the card's plain answer, resending it with
-    /// the Le of a `6Cxx` at most 2 times in a row; past that, [`Error::Status`] with the last one.
-    pub(crate) fn transmit<T: Transport + ?Sized>(
-        &mut self,
-        transport: &mut T,
-        command: &Command,
-    ) -> Result<Response, Error> {
-        let mut resends = Resends::default();
-        loop {
-            let protected = self.protect(resends.current(command))?;
-            let response = self.unprotect(&transport.transmit(&protected)?)?;
-            if !Resends::is_wrong_length(response.status) {
-                return Ok(response);
-            }
-            resends.resend_with_le(command, response.status)?;
-        }
-    }
-
     /// Checks and decrypts `[87] 99 8E` as JMulticard, incrementing the SSC first; bytes after `8E` are ignored.
     pub(crate) fn unprotect(&mut self, response: &Response) -> Result<Response, Error> {
         if response.status == CHANNEL_LOST {
@@ -256,13 +238,29 @@ impl SecureMessaging {
     }
 }
 
-/// A transport whose commands all travel through `channel`, as a channel opened inside another.
-pub(crate) struct Protected<'a> {
-    pub(crate) channel: &'a mut SecureMessaging,
-    pub(crate) card: &'a mut dyn Transport,
+/// An open secure channel bound to the card it runs over: the only way protected commands are sent.
+pub(crate) struct SecureChannel<'a> {
+    state: SecureMessaging,
+    card: &'a mut dyn Transport,
 }
 
-impl Transport for Protected<'_> {
+impl<'a> SecureChannel<'a> {
+    pub(crate) fn new(state: SecureMessaging, card: &'a mut dyn Transport) -> Self {
+        Self { state, card }
+    }
+
+    /// Negotiates a channel through this one with `handshake`, then binds it to the card beneath
+    /// and drops this one.
+    pub(crate) fn open_inside(
+        mut self,
+        handshake: impl FnOnce(&mut dyn Transport) -> Result<SecureMessaging, Error>,
+    ) -> Result<Self, Error> {
+        let state = handshake(&mut self)?;
+        Ok(Self::new(state, self.card))
+    }
+}
+
+impl Transport for SecureChannel<'_> {
     fn transmit_raw(&mut self, _apdu: &[u8]) -> Result<Vec<u8>, Error> {
         Err(Error::Transport(
             "raw apdus cannot cross a secure channel".into(),
@@ -286,8 +284,18 @@ impl Transport for Protected<'_> {
         body(self)
     }
 
+    /// Protects `command` and returns the card's plain answer, resending it with the Le of a `6Cxx`
+    /// at most 2 times in a row; past that, [`Error::Status`] with the last one.
     fn transmit(&mut self, command: &Command) -> Result<Response, Error> {
-        self.channel.transmit(self.card, command)
+        let mut resends = Resends::default();
+        loop {
+            let protected = self.state.protect(resends.current(command))?;
+            let response = self.state.unprotect(&self.card.transmit(&protected)?)?;
+            if !Resends::is_wrong_length(response.status) {
+                return Ok(response);
+            }
+            resends.resend_with_le(command, response.status)?;
+        }
     }
 }
 

@@ -79,7 +79,7 @@ use crate::{
     Command, Error, Transport,
     files::{self, Location},
     key_sets::{CA_PUBLIC_KEY_REFERENCE, ComponentRoots, ICC_PRIVATE_KEY_REFERENCE, KeySet},
-    secure_messaging::SecureMessaging,
+    secure_messaging::{SecureChannel, SecureMessaging},
 };
 
 const ICC_CERTIFICATE: &[u8] = &[0x3F, 0x00, 0x60, 0x1F];
@@ -111,8 +111,26 @@ const EXTERNAL_AUTHENTICATION_FAILED: Error =
     Error::SecureChannel("the external authentication could not be built");
 const RANDOM_FAILED: Error = Error::SecureChannel("the OS random generator failed");
 
-/// Authenticates card and terminal with `keys` and returns the channel they agree on.
-pub(crate) fn open(
+/// Authenticates card and terminal with `keys` and returns the channel they agree on over `card`.
+pub(crate) fn open<'a>(
+    card: &'a mut dyn Transport,
+    keys: &KeySet,
+    roots: &ComponentRoots,
+) -> Result<SecureChannel<'a>, Error> {
+    let state = handshake(card, keys, roots)?;
+    Ok(SecureChannel::new(state, card))
+}
+
+/// Authenticates through `outer` with `keys` and returns the agreed channel over the card beneath.
+pub(crate) fn open_inside<'a>(
+    outer: SecureChannel<'a>,
+    keys: &KeySet,
+    roots: &ComponentRoots,
+) -> Result<SecureChannel<'a>, Error> {
+    outer.open_inside(|channel| handshake(channel, keys, roots))
+}
+
+fn handshake(
     card: &mut dyn Transport,
     keys: &KeySet,
     roots: &ComponentRoots,

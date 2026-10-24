@@ -206,7 +206,7 @@ impl<T: Transport> Session<T> {
         let roots = &self.roots;
         operation(&mut self.transport, |card| {
             let mut channel = pin::verify(card, idesp, roots, pin, retries)?;
-            signature::sign(&mut channel, card, key, digest_info)
+            signature::sign(&mut channel, key, digest_info)
         })
     }
 

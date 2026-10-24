@@ -51,7 +51,7 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     Command, Error, StatusWord, Transport, cwa14890, files,
     key_sets::{Channel, ComponentRoots, KeySet},
-    secure_messaging::{Protected, SecureMessaging},
+    secure_messaging::SecureChannel,
 };
 
 const VERIFY: u8 = 0x20;
@@ -98,20 +98,20 @@ pub(crate) fn retries_left(
     roots: &ComponentRoots,
 ) -> Result<u8, Error> {
     let mut channel = open_pin_channel(card, idesp, roots)?;
-    query_retries(&mut channel, card)
+    query_retries(&mut channel)
 }
 
 /// Rereads the retries and, if they are still `expected` and not zero, sends `pin` once through
-/// the PIN channel and returns the user channel.
-pub(crate) fn verify(
-    card: &mut dyn Transport,
+/// the PIN channel and returns the user channel over `card`.
+pub(crate) fn verify<'a>(
+    card: &'a mut dyn Transport,
     idesp: Option<&str>,
     roots: &ComponentRoots,
     pin: Pin,
     expected: u8,
-) -> Result<SecureMessaging, Error> {
+) -> Result<SecureChannel<'a>, Error> {
     let mut channel = open_pin_channel(card, idesp, roots)?;
-    let retries = query_retries(&mut channel, card)?;
+    let retries = query_retries(&mut channel)?;
     if retries == 0 {
         return Err(Error::PinBlocked);
     }
@@ -127,13 +127,13 @@ pub(crate) fn verify(
         le: None,
     };
     drop(pin);
-    let response = channel.transmit(card, &command);
+    let response = channel.transmit(&command);
     command.data.zeroize();
     let response = response?;
     if response.status != StatusWord::SUCCESS {
         return Err(refusal(response.status));
     }
-    open_user_channel(&mut channel, card, idesp, roots)
+    open_user_channel(channel, idesp, roots)
 }
 
 /// What a status word other than success means for a `VERIFY` that carried the PIN.
@@ -153,18 +153,15 @@ fn retries_in(status: StatusWord) -> Option<u8> {
     }
 }
 
-fn query_retries(channel: &mut SecureMessaging, card: &mut dyn Transport) -> Result<u8, Error> {
-    let response = channel.transmit(
-        card,
-        &Command {
-            cla: 0x00,
-            ins: VERIFY,
-            p1: 0x00,
-            p2: 0x00,
-            data: vec![],
-            le: Some(256),
-        },
-    )?;
+fn query_retries(channel: &mut SecureChannel<'_>) -> Result<u8, Error> {
+    let response = channel.transmit(&Command {
+        cla: 0x00,
+        ins: VERIFY,
+        p1: 0x00,
+        p2: 0x00,
+        data: vec![],
+        le: Some(256),
+    })?;
     match retries_in(response.status) {
         Some(retries) => Ok(retries),
         None if response.status == BLOCKED => Err(Error::PinBlocked),
@@ -173,11 +170,11 @@ fn query_retries(channel: &mut SecureMessaging, card: &mut dyn Transport) -> Res
 }
 
 /// Selects the master file, whose refusal `Dnie3` only warns about, then authenticates.
-fn open_pin_channel(
-    card: &mut dyn Transport,
+fn open_pin_channel<'a>(
+    card: &'a mut dyn Transport,
     idesp: Option<&str>,
     roots: &ComponentRoots,
-) -> Result<SecureMessaging, Error> {
+) -> Result<SecureChannel<'a>, Error> {
     match files::select_master_file(card) {
         Ok(()) | Err(Error::Status(_)) => {}
         Err(error) => return Err(error),
@@ -186,18 +183,14 @@ fn open_pin_channel(
 }
 
 /// Selects the master file and authenticates with the user keys, all through the PIN channel, as
-/// `Dnie3.openUserChannel` does.
-fn open_user_channel(
-    pin_channel: &mut SecureMessaging,
-    card: &mut dyn Transport,
+/// `Dnie3.openUserChannel` does, and drops the PIN channel.
+fn open_user_channel<'a>(
+    mut pin_channel: SecureChannel<'a>,
     idesp: Option<&str>,
     roots: &ComponentRoots,
-) -> Result<SecureMessaging, Error> {
-    let mut card = Protected {
-        channel: pin_channel,
-        card,
-    };
-    card.transmit(&files::master_file_selection())?
+) -> Result<SecureChannel<'a>, Error> {
+    pin_channel
+        .transmit(&files::master_file_selection())?
         .into_success()?;
-    cwa14890::open(&mut card, KeySet::for_card(idesp, Channel::User), roots)
+    cwa14890::open_inside(pin_channel, KeySet::for_card(idesp, Channel::User), roots)
 }
