@@ -84,12 +84,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: Missed mutants
+        # A lone artifact lands in mutants/ itself, several in a folder each.
         run: |
+          missed=$(find mutants -name missed.txt -exec cat {} + 2>/dev/null || true)
           {
             echo "${{ github.event_name }} on \`${{ github.sha }}\`: $RUN_URL"
             echo
             echo '```'
-            cat mutants/*/missed.txt 2>/dev/null || echo 'no mutant list: see the run'
+            echo "${missed:-no mutant list: see the run}"
             echo '```'
           } > "$RUNNER_TEMP/body.md"
           number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')
