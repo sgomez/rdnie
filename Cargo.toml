@@ -32,6 +32,10 @@ required-features = ["pcsc"]
 name = "latency"
 required-features = ["pcsc"]
 
+[[example]]
+name = "bench"
+required-features = ["pcsc"]
+
 [dependencies]
 cbc = { version = "0.2", features = ["alloc"] }
 der = "0.7"
