@@ -64,16 +64,6 @@ fn sends_no_apdu_for_an_invalid_format() {
 }
 
 #[test]
-fn reads_the_retries_first_when_none_were_shown() {
-    let mut session = open(signing_card());
-    verify_with(&mut session, DEFAULT_PIN).unwrap();
-    let queries = session.transport.pin_queries();
-    let read = queries.iter().find(|query| !query.with_pin).unwrap();
-    let verified = queries.iter().find(|query| query.with_pin).unwrap();
-    assert!(read.transaction < verified.transaction);
-}
-
-#[test]
 fn reads_no_retries_in_a_separate_transaction_when_they_were_shown() {
     let mut session = open(signing_card());
     session.pin_retries_left().unwrap();

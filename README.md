@@ -71,7 +71,7 @@ fn main() -> Result<(), rdnie::Error> {
 
 ## The PIN
 
-- **Never sent blind.** `sign` reads the retries again before VERIFY and stops without sending the PIN if they are 0 (`Error::PinBlocked`) or differ from those `pin_retries_left` showed (`Error::PinRetriesChanged`). Show the holder the retries before asking for the PIN.
+- **Never sent blind.** rdnie sends the PIN only if the caller read the retries with `pin_retries_left` in this session (`Error::PinRetriesNotRead` otherwise). `sign` reads them again before VERIFY and stops without sending the PIN if they are 0 (`Error::PinBlocked`) or differ from those the session expects (`Error::PinRetriesChanged`). Showing the holder the retries before asking for the PIN is the caller's job.
 - **One attempt per call.** A wrong PIN returns `Error::WrongPin`, and nothing retries on its own, not even after a card reset.
 - **Checked before the card.** A PIN outside 8 to 16 characters fails with `Error::InvalidPinFormat` without spending an attempt.
 - **Wiped from memory.** `Pin` is zeroized when dropped, and no PIN or session key survives an operation.

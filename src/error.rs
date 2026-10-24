@@ -62,6 +62,9 @@ pub enum Error {
     /// The retries changed between reading them and verifying the PIN.
     #[error("the PIN retries changed since they were read")]
     PinRetriesChanged,
+    /// The session expects no retries: read them with `Session::pin_retries_left` first.
+    #[error("the PIN retries were not read in this session")]
+    PinRetriesNotRead,
     /// The digest is not as long as its hash algorithm makes them.
     #[error("digest of {actual} bytes where its algorithm gives {expected}")]
     DigestLength {

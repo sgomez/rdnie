@@ -21,7 +21,7 @@ Status: **Same** the counterpart behaves as in Java · **Changed** the name or s
 | `getAliases` | `Session::labels -> Vec<String>`: the labels of the keyed certificates, read from the CDF and the PrKDF only (#129, #131) | Changed |
 | `getCertificate(alias)` | `Session::certificate(label)`: the DER, read on demand; keyless certificates stay reachable (#40) | Same |
 | `getPrivateKey(alias)` | `Session::private_key(label) -> Option<KeyReference>` | Added |
-| `sign(data, algorithm, keyRef)` | `Session::sign(digest, DigestAlgorithm, key, pin)`: the caller hashes, the PIN is consumed per call, the retries are reread before the single VERIFY, a card reset gives `Error::CardReset` | Changed |
+| `sign(data, algorithm, keyRef)` | `Session::sign(digest, DigestAlgorithm, key, pin)`: the caller hashes, the PIN is consumed per call, the retries are reread before the single VERIFY, a card reset gives `Error::CardReset`. Departs from JMulticard: the retries are the version of an optimistic lock, so `sign` fails with `Error::PinRetriesNotRead` unless the caller read them in this session, and the card must still hold those the session expects; fewer mutual authentications in a batch are only a side effect | Changed |
 
 ### `card.dnie.Dnie`, `Dnie3`
 
@@ -31,7 +31,7 @@ Status: **Same** the counterpart behaves as in Java · **Changed** the name or s
 | `getCardName`, `toString` | `Session::card_name` (`DNIe 3.0/4.0`) | Added |
 | `getIdesp` | `Session::idesp` | Added |
 | `getPinRetriesLeft` | `Session::pin_retries_left`: opens its own PIN channel, where Java leaves the card in it | Changed |
-| `verifyPin` | `Session::verify_pin`: opens its own PIN channel, reads the retries first, one attempt (CLAUDE.md constraint 3) | Same |
+| `verifyPin` | `Session::verify_pin`: opens its own PIN channel, rereads the retries in the same transaction, one attempt (CLAUDE.md constraint 3). Departs from JMulticard: the retries are the version of an optimistic lock, so it fails with `Error::PinRetriesNotRead` unless the caller read them in this session, and the card must still hold those the session expects; fewer mutual authentications in a batch are only a side effect | Changed |
 | `openSecureChannelIfNotAlreadyOpened()`, `(doChv)` | — (internal: each operation opens its channel in its own transaction and does not keep it) | Not ported |
 | `changePIN` | — (pending a follow-up: it widens CLAUDE.md constraint 1) | Not ported |
 | `cipherData` | — (pending a follow-up: it widens CLAUDE.md constraint 1) | Not ported |

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - *(pin)* [**breaking**] treat the PIN retries as an optimistic lock: `sign` and `verify_pin` fail with `PinRetriesChanged`, before the PIN is sent, if the retries moved at any time since the last PIN operation
+- *(pin)* [**breaking**] `sign` and `verify_pin` without a prior `pin_retries_left` fail with `PinRetriesNotRead` instead of reading the retries themselves
 - *(pin)* [**breaking**] an operation after an accepted `VERIFY` expects the maximum retries and takes one transaction
 - *(pin)* [**breaking**] an error before `VERIFY` is sent no longer drops the expected retries
 - *(pin)* [**breaking**] after `PinBlocked`, the next operation fails without touching the card until `pin_retries_left`
