@@ -10,7 +10,7 @@ Rust driver for the Spanish electronic ID card (DNIe) that talks APDU to the car
 2. **Cryptography comes from RustCrypto, never hand-written.** The crate composes primitives (3DES, AES, retail MAC, RSA, SHA) and implements none.
 3. **The PIN is never sent blind.** The remaining retries are read before VERIFY, and an operation makes at most one attempt.
 4. **No `unsafe`** (`unsafe_code = "forbid"` in `Cargo.toml`).
-5. **The transport is a seam.** The protocol only knows the `Transport` trait. PC/SC lives behind the `pcsc` feature, and tests use an emulator.
+5. **The transport is a seam.** The protocol only sees a Port inside a Transport transaction. PC/SC lives behind the `pcsc` feature, and tests use an emulator.
 6. **English everywhere:** code, docs, comments, error messages, commits, issues and PRs. Error messages follow the Rust API Guidelines: lowercase, no trailing period.
 7. **Comments: the default is none.** The name is the comment. `//!` for a module and `///` for a public item, one line each; `//` in a body only when it says what the code cannot.
 8. **Don't write what rots:** no counters or lists that already live in the code. Point at the source.
