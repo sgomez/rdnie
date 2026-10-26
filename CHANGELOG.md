@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/sgomez/rdnie/compare/rdnie-v0.3.0...rdnie-v0.4.0) - 2026-10-26
+
+### Changed
+
+- *(pin)* [**breaking**] drop the fallback read and fail with PinRetriesNotRead
+- *(pin)* [**breaking**] keep the expected PIN retries after every PIN operation
+
 ### Changed
 
 - *(pin)* [**breaking**] treat the PIN retries as an optimistic lock: `sign` and `verify_pin` fail with `PinRetriesChanged`, before the PIN is sent, if the retries moved at any time since the last PIN operation
