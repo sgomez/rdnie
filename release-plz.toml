@@ -15,7 +15,6 @@ commit_parsers = [
 
 [[package]]
 name = "rdnie"
-# rdnie-emulator implements rdnie's Transport: a breaking rdnie is a breaking emulator.
 version_group = "rdnie"
 changelog_path = "CHANGELOG.md"
 
