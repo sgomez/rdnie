@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/sgomez/rdnie/compare/rdnie-emulator-v0.3.0...rdnie-emulator-v0.4.0) - 2026-10-26
+
+### Changed
+
+- *(deps)* [**breaking**] depend on rdnie 0.4, so `EmulatedDnie` implements rdnie 0.4's `Transport`; 0.3.1 is yanked for breaking this under a patch release
+
 ## [0.3.0](https://github.com/sgomez/rdnie/compare/rdnie-emulator-v0.2.0...rdnie-emulator-v0.3.0) - 2026-10-24
 
 ### Changed
