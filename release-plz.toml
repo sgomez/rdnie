@@ -15,8 +15,10 @@ commit_parsers = [
 
 [[package]]
 name = "rdnie"
+version_group = "rdnie"
 changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "rdnie-emulator"
+version_group = "rdnie"
 changelog_path = "rdnie-emulator/CHANGELOG.md"
