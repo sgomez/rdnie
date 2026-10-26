@@ -17,6 +17,7 @@ use crate::{
 
 mod card_removal;
 mod certificates;
+mod expected_retries;
 mod opening;
 mod pin;
 mod secure_channel;
@@ -95,6 +96,9 @@ fn verify(certificate: &[u8], scheme: Pkcs1v15Sign, digest: &[u8], signature: &[
 fn sign_with_pin(card: EmulatedDnie, pin: &str) -> (Result<Vec<u8>, Error>, EmulatedDnie) {
     let mut session = open(card);
     let key = first_key(&mut session);
+    if let Err(error) = session.pin_retries_left() {
+        return (Err(error), session.into_transport());
+    }
     let result = session.sign(
         &[0; 32],
         DigestAlgorithm::Sha256,

@@ -136,7 +136,9 @@ impl<T: Transport> Session<T> {
         Ok(Some(der))
     }
 
-    /// Reads how many PIN attempts are left through the PIN channel, without sending a PIN.
+    /// Reads how many PIN attempts are left through the PIN channel, without sending a PIN, and
+    /// sets them as the version the next [`Session::sign`] or [`Session::verify_pin`] expects; a
+    /// blocked PIN sets 0.
     ///
     /// # Errors
     ///
@@ -150,15 +152,25 @@ impl<T: Transport> Session<T> {
     }
 
     /// Signs a SHA-256/384/512 digest with `key` after verifying `pin`, and returns the PKCS#1
-    /// v1.5 signature; the retries must still be those last shown, by [`Session::pin_retries_left`] or
-    /// by the [`Error::WrongPin`] of the previous attempt.
+    /// v1.5 signature. The card must still hold the retries the session expects: those
+    /// [`Session::pin_retries_left`] read, those the previous [`Error::WrongPin`] reported, or the
+    /// maximum after an accepted `VERIFY`, whatever the operation that followed returned. Without
+    /// them it fails with [`Error::PinRetriesNotRead`]; they do not survive the session.
+    ///
+    /// rdnie forces a read, not a showing: not sending the PIN blind rests on the caller showing
+    /// the holder the count. Calling [`Session::pin_retries_left`] only so that `sign` does not
+    /// fail, as a consumer reopening a session might, is back to "read, then send".
     ///
     /// # Errors
     ///
-    /// [`Error::DigestLength`], then [`Error::InvalidPinFormat`], before touching the card, those
-    /// of [`Session::pin_retries_left`], [`Error::PinRetriesChanged`] if the retries moved between the
-    /// two phases, [`Error::WrongPin`] after the single attempt and [`Error::Status`] if the card
-    /// refuses the signature. The channel errors are those of [`Session::pin_retries_left`].
+    /// Before touching the card, in order: [`Error::DigestLength`], [`Error::InvalidPinFormat`],
+    /// [`Error::PinRetriesNotRead`] if the session expects no retries and [`Error::PinBlocked`] if
+    /// it expects 0. Then those of [`Session::pin_retries_left`], [`Error::PinRetriesChanged`] if
+    /// the retries moved at any time since the last PIN operation, [`Error::WrongPin`] after the
+    /// single attempt and [`Error::Status`] if the card refuses the signature. After
+    /// [`Error::PinRetriesNotRead`], [`Error::PinBlocked`] or [`Error::PinRetriesChanged`], or any
+    /// error once `VERIFY` was sent that leaves the count unknown, call
+    /// [`Session::pin_retries_left`] and show the count before trying again.
     pub fn sign(
         &mut self,
         digest: &[u8],
@@ -173,14 +185,23 @@ impl<T: Transport> Session<T> {
             })
     }
 
-    /// Verifies `pin` on the card without signing, under the same policy as [`Session::sign`]; a
-    /// later `sign` verifies the PIN again.
+    /// Verifies `pin` on the card without signing, expecting the retries [`Session::sign`] does; a
+    /// later `sign` verifies the PIN again. Without them it fails with
+    /// [`Error::PinRetriesNotRead`]; they do not survive the session.
+    ///
+    /// rdnie forces a read, not a showing: not sending the PIN blind rests on the caller showing
+    /// the holder the count. Calling [`Session::pin_retries_left`] only so that `verify_pin` does
+    /// not fail, as a consumer reopening a session might, is back to "read, then send".
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidPinFormat`] before touching the card, those of [`Session::pin_retries_left`],
-    /// [`Error::PinRetriesChanged`] if the retries moved between the two phases and
-    /// [`Error::WrongPin`] after the single attempt.
+    /// Before touching the card, in order: [`Error::InvalidPinFormat`],
+    /// [`Error::PinRetriesNotRead`] if the session expects no retries and [`Error::PinBlocked`] if
+    /// it expects 0. Then those of [`Session::pin_retries_left`], [`Error::PinRetriesChanged`] if
+    /// the retries moved at any time since the last PIN operation and [`Error::WrongPin`] after the
+    /// single attempt. After [`Error::PinRetriesNotRead`], [`Error::PinBlocked`] or
+    /// [`Error::PinRetriesChanged`], or any error once `VERIFY` was sent that leaves the count
+    /// unknown, call [`Session::pin_retries_left`] and show the count before trying again.
     pub fn verify_pin(&mut self, pin: Pin) -> Result<(), Error> {
         self.pin_guard
             .verified(&mut self.transport, pin, |_| Ok(()))
