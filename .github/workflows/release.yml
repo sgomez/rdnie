@@ -30,7 +30,7 @@ jobs:
           toolchain: stable
       - &pcsc
         run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
-      - uses: release-plz/action@6caa8d34f74d82b0dc76a18edd1cc3d6801c9baf # v0.5.143
+      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
         with:
           command: release
         env:
@@ -54,7 +54,7 @@ jobs:
       - *checkout
       - *toolchain
       - *pcsc
-      - uses: release-plz/action@6caa8d34f74d82b0dc76a18edd1cc3d6801c9baf # v0.5.143
+      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
         with:
           command: release-pr
         env:
